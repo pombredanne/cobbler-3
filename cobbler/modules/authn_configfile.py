@@ -22,25 +22,21 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 """
 
 import distutils.sysconfig
-import ConfigParser
-import sys
 import os
-from utils import _
+import sys
 from utils import md5
-import traceback
 
 plib = distutils.sysconfig.get_python_lib()
-mod_path="%s/cobbler" % plib
+mod_path = "%s/cobbler" % plib
 sys.path.insert(0, mod_path)
 
-import cexceptions
-import utils
 
 def register():
     """
     The mandatory cobbler module registration hook.
     """
     return "authn"
+
 
 def __parse_storage():
 
@@ -55,30 +51,28 @@ def __parse_storage():
         try:
             line = line.strip()
             tokens = line.split(":")
-            results.append([tokens[0],tokens[1],tokens[2]])
+            results.append([tokens[0], tokens[1], tokens[2]])
         except:
             pass
     return results
 
-def authenticate(api_handle,username,password):
+
+def authenticate(api_handle, username, password):
     """
     Validate a username/password combo, returning True/False
 
     Thanks to http://trac.edgewall.org/ticket/845 for supplying
     the algorithm info.
     """
-  
     # debugging only (not safe to enable)
     # api_handle.logger.debug("backend authenticate (%s,%s)" % (username,password))
 
     userlist = __parse_storage()
-    for (user,realm,actual_blob) in userlist:
+    for (user, realm, actual_blob) in userlist:
         if user == username and realm == "Cobbler":
-            input = ":".join([user,realm,password])
+            input = ":".join([user, realm, password])
             input_blob = md5(input).hexdigest()
             if input_blob.lower() == actual_blob.lower():
                 return True
 
     return False
-
-

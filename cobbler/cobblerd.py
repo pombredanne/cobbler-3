@@ -1,6 +1,6 @@
 """
-cobbler daemon for logging remote syslog traffic during kickstart
- 
+cobbler daemon for logging remote syslog traffic during automatic installation
+
 Copyright 2007-2009, Red Hat, Inc and Others
 Michael DeHaan <michael.dehaan AT gmail>
 
@@ -20,34 +20,26 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 02110-1301  USA
 """
 
-import sys
-import socket
-import time
-import os
-import SimpleXMLRPCServer
-import glob
-from utils import _
-import xmlrpclib
 import binascii
-import utils
+import os
+import pwd
+import sys
+import time
 
 import api as cobbler_api
-import yaml # Howell Clark version
-import utils
 import remote
+import utils
 
 
-def main():
-    core(logger=None)
 
 def core(api):
-
-    bootapi      = api
-    settings     = bootapi.settings()
-    xmlrpc_port  = settings.xmlrpc_port
+    cobbler_api = api
+    settings = cobbler_api.settings()
+    xmlrpc_port = settings.xmlrpc_port
 
     regen_ss_file()
-    do_xmlrpc_tasks(bootapi, settings, xmlrpc_port)
+    do_xmlrpc_tasks(cobbler_api, settings, xmlrpc_port)
+
 
 def regen_ss_file():
     # this is only used for Kerberos auth at the moment.
@@ -57,63 +49,38 @@ def regen_ss_file():
     fd = open("/dev/urandom")
     data = fd.read(512)
     fd.close()
-    if not os.path.isfile(ssfile):
-        fd = os.open(ssfile,os.O_CREAT|os.O_RDWR,0600)
-        os.write(fd,binascii.hexlify(data))
-        os.close(fd)
-        http_user = "apache"
-        if utils.check_dist() in [ "debian", "ubuntu" ]:
-            http_user = "www-data"
-        utils.os_system("chown %s /var/lib/cobbler/web.ss"%http_user )
-    else:
-        fd = os.open(ssfile,os.O_CREAT|os.O_RDWR,0600)
-        os.write(fd,binascii.hexlify(data))
-        os.close(fd)
+
+    fd = os.open(ssfile, os.O_CREAT | os.O_RDWR, 0600)
+    os.write(fd, binascii.hexlify(data))
+    os.close(fd)
+
+    http_user = "apache"
+    family = utils.get_family()
+    if family == "debian":
+        http_user = "www-data"
+    elif family == "suse":
+        http_user = "wwwrun"
+    os.lchown("/var/lib/cobbler/web.ss", pwd.getpwnam(http_user)[2], -1)
 
     return 1
 
-def do_xmlrpc_tasks(bootapi, settings, xmlrpc_port):
-    do_xmlrpc_rw(bootapi, settings, xmlrpc_port)
 
-#def do_other_tasks(bootapi, settings, syslog_port, logger):
-#
-#    # FUTURE: this should also start the Web UI, if the dependencies
-#    # are available.
-# 
-#    if os.path.exists("/usr/bin/avahi-publish-service"):
-#        pid2 = os.fork()
-#        if pid2 == 0:
-#           do_syslog(bootapi, settings, syslog_port, logger)
-#        else:
-#           do_avahi(bootapi, settings, logger)
-#           os.waitpid(pid2, 0)
-#    else:
-#        do_syslog(bootapi, settings, syslog_port, logger)
+def do_xmlrpc_tasks(cobbler_api, settings, xmlrpc_port):
+    do_xmlrpc_rw(cobbler_api, settings, xmlrpc_port)
 
 
-def log(logger,msg):
+def log(logger, msg):
     if logger is not None:
         logger.info(msg)
     else:
         print >>sys.stderr, msg
 
-#def do_avahi(bootapi, settings, logger):
-#    # publish via zeroconf.  This command will not terminate
-#    log(logger, "publishing avahi service")
-#    cmd = [ "/usr/bin/avahi-publish-service",
-#            "cobblerd",
-#            "_http._tcp",
-#            "%s" % settings.xmlrpc_port ]
-#    proc = sub_process.Popen(cmd, shell=False, stderr=sub_process.PIPE, stdout=sub_process.PIPE, close_fds=True)
-#    proc.communicate()[0]
-#    log(logger, "avahi service terminated") 
 
+def do_xmlrpc_rw(cobbler_api, settings, port):
 
-def do_xmlrpc_rw(bootapi,settings,port):
-
-    xinterface = remote.ProxiedXMLRPCInterface(bootapi,remote.CobblerXMLRPCInterface)
+    xinterface = remote.ProxiedXMLRPCInterface(cobbler_api, remote.CobblerXMLRPCInterface)
     server = remote.CobblerXMLRPCServer(('127.0.0.1', port))
-    server.logRequests = 0  # don't print stuff
+    server.logRequests = 0      # don't print stuff
     xinterface.logger.debug("XMLRPC running on %s" % port)
     server.register_instance(xinterface)
 
@@ -125,12 +92,9 @@ def do_xmlrpc_rw(bootapi,settings,port):
             # interrupted? try to serve again
             time.sleep(0.5)
 
+
 if __name__ == "__main__":
-
-    bootapi  = cobbler_api.BootAPI()
-    settings = bootapi.settings()
-
+    cobbler_api = cobbler_api.CobblerAPI()
+    settings = cobbler_api.settings()
     regen_ss_file()
-
-    do_xmlrpc_rw(bootapi, settings, 25151)
-
+    do_xmlrpc_rw(cobbler_api, settings, 25151)

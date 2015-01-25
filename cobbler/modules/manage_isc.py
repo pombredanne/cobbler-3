@@ -22,27 +22,18 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 """
 
 import time
-import glob
-import traceback
-import errno
 
-import utils
-from cexceptions import *
+from cexceptions import CX
 import templar
-
-import item_distro
-import item_profile
-import item_repo
-import item_system
-
+import utils
 from utils import _
 
 
 def register():
-   """
-   The mandatory cobbler module registration hook.
-   """
-   return "manage"
+    """
+    The mandatory cobbler module registration hook.
+    """
+    return "manage"
 
 
 class IscManager:
@@ -50,19 +41,19 @@ class IscManager:
     def what(self):
         return "isc"
 
-    def __init__(self,config,logger):
+    def __init__(self, collection_mgr, logger):
         """
         Constructor
         """
-        self.logger        = logger
-        self.config        = config
-        self.api           = config.api
-        self.distros       = config.distros()
-        self.profiles      = config.profiles()
-        self.systems       = config.systems()
-        self.settings      = config.settings()
-        self.repos         = config.repos()
-        self.templar       = templar.Templar(config)
+        self.logger = logger
+        self.collection_mgr = collection_mgr
+        self.api = collection_mgr.api
+        self.distros = collection_mgr.distros()
+        self.profiles = collection_mgr.profiles()
+        self.systems = collection_mgr.systems()
+        self.settings = collection_mgr.settings()
+        self.repos = collection_mgr.repos()
+        self.templar = templar.Templar(collection_mgr)
         self.settings_file = utils.dhcpconf_location(self.api)
 
     def write_dhcp_file(self):
@@ -75,7 +66,7 @@ class IscManager:
         blender_cache = {}
 
         try:
-            f2 = open(template_file,"r")
+            f2 = open(template_file, "r")
         except:
             raise CX(_("error reading template: %s") % template_file)
         template_data = ""
@@ -88,16 +79,15 @@ class IscManager:
 
         # we used to just loop through each system, but now we must loop
         # through each network interface of each system.
-        dhcp_tags = { "default": {} }
-        elilo = "/elilo-3.6-ia64.efi"
-        yaboot = "/yaboot-1.3.14"
+        dhcp_tags = {"default": {}}
+        yaboot = "/yaboot"
 
         for system in self.systems:
             if not system.is_management_supported(cidr_ok=False):
                 continue
 
             profile = system.get_conceptual_parent()
-            distro  = profile.get_conceptual_parent()
+            distro = profile.get_conceptual_parent()
 
             # if distro is None then the profile is really an image
             # record!
@@ -109,8 +99,8 @@ class IscManager:
                 # without upgrade
                 interface["gateway"] = system.gateway
 
-                mac  = interface["mac_address"]
-                if interface["interface_type"] in ("slave","bond_slave","bridge_slave","bonded_bridge_slave"):
+                mac = interface["mac_address"]
+                if interface["interface_type"] in ("bond_slave", "bridge_slave", "bonded_bridge_slave"):
                     if interface["interface_master"] not in system.interfaces:
                         # Can't write DHCP entry; master interface does not
                         # exist
@@ -118,12 +108,13 @@ class IscManager:
                     ip = system.interfaces[interface["interface_master"]]["ip_address"]
                     interface["ip_address"] = ip
                     host = system.interfaces[interface["interface_master"]]["dns_name"]
+                    interface["if_gateway"] = system.interfaces[interface["interface_master"]]["if_gateway"]
                 else:
-                    ip   = interface["ip_address"]
+                    ip = interface["ip_address"]
                     host = interface["dns_name"]
 
                 if distro is not None:
-                    interface["distro"]  = distro.to_datastruct()
+                    interface["distro"] = distro.to_dict()
 
                 if mac is None or mac == "":
                     # can't write a DHCP entry for this system
@@ -134,7 +125,7 @@ class IscManager:
                 # the label the entry after the hostname if possible
                 if host is not None and host != "":
                     if name != "eth0":
-                        interface["name"] = "%s_%s" % (host,name)
+                        interface["name"] = "%s-%s" % (host, name)
                     else:
                         interface["name"] = "%s" % (host)
                 else:
@@ -142,49 +133,52 @@ class IscManager:
 
                 # add references to the system, profile, and distro
                 # for use in the template
-                if blender_cache.has_key(system.name):
+                if system.name in blender_cache:
                     blended_system = blender_cache[system.name]
                 else:
-                    blended_system  = utils.blender( self.api, False, system )
+                    blended_system = utils.blender(self.api, False, system)
                     blender_cache[system.name] = blended_system
 
-                interface["next_server"] = blended_system["server"]
+                interface["next_server"] = blended_system["next_server"]
                 interface["netboot_enabled"] = blended_system["netboot_enabled"]
                 interface["hostname"] = blended_system["hostname"]
                 interface["owner"] = blended_system["name"]
                 interface["enable_gpxe"] = blended_system["enable_gpxe"]
+                interface["name_servers"] = blended_system["name_servers"]
 
-                if not interface["netboot_enabled"] and interface['static']:
-                    continue
+                if not self.settings.always_write_dhcp_entries:
+                    if not interface["netboot_enabled"] and interface['static']:
+                        continue
 
                 interface["filename"] = "/pxelinux.0"
                 # can't use pxelinux.0 anymore
                 if distro is not None:
-                    if distro.arch == "ia64":
-                        interface["filename"] = elilo
-                    elif distro.arch.startswith("ppc"):
-                        interface["filename"] = yaboot
+                    if distro.arch.startswith("ppc"):
+                        if blended_system["boot_loader"] == "pxelinux":
+                            del interface["filename"]
+                        elif distro.boot_loader == "grub2":
+                            interface["filename"] = "boot/grub/powerpc-ieee1275/core.elf"
+                        else:
+                            interface["filename"] = yaboot
 
                 dhcp_tag = interface["dhcp_tag"]
                 if dhcp_tag == "":
-                   dhcp_tag = "default"
+                    dhcp_tag = "default"
 
-
-                if not dhcp_tags.has_key(dhcp_tag):
+                if dhcp_tag not in dhcp_tags:
                     dhcp_tags[dhcp_tag] = {
-                       mac: interface
+                        mac: interface
                     }
                 else:
                     dhcp_tags[dhcp_tag][mac] = interface
 
         # we are now done with the looping through each interface of each system
         metadata = {
-           "date"           : time.asctime(time.gmtime()),
-           "cobbler_server" : "%s:%s" % (self.settings.server,self.settings.http_port),
-           "next_server"    : self.settings.next_server,
-           "elilo"          : elilo,
-           "yaboot"         : yaboot,
-           "dhcp_tags"      : dhcp_tags
+            "date": time.asctime(time.gmtime()),
+            "cobbler_server": "%s:%s" % (self.settings.server, self.settings.http_port),
+            "next_server": self.settings.next_server,
+            "yaboot": yaboot,
+            "dhcp_tags": dhcp_tags
         }
 
         if self.logger is not None:
@@ -192,8 +186,8 @@ class IscManager:
         self.templar.render(template_data, metadata, self.settings_file, None)
 
     def regen_ethers(self):
-        pass # ISC/BIND do not use this
+        pass            # ISC/BIND do not use this
 
 
-def get_manager(config,logger):
-    return IscManager(config,logger)
+def get_manager(collection_mgr, logger):
+    return IscManager(collection_mgr, logger)

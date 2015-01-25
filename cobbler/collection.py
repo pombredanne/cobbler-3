@@ -1,6 +1,4 @@
 """
-Base class for any serializable list of things...
-
 Copyright 2006-2009, Red Hat, Inc and Others
 Michael DeHaan <michael.dehaan AT gmail>
 
@@ -21,56 +19,86 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 """
 
 import exceptions
-from cexceptions import *
 import utils
-import glob
 import time
-import random
 import os
 from threading import Lock
 
-import action_litesync
-import item_system
-import item_profile
-import item_distro
-import item_repo
-import item_image
-import item_mgmtclass
-import item_package
-import item_file
-from utils import _
+from cobbler import action_litesync
+from cobbler import item_system
+from cobbler import item_profile
+from cobbler import item_distro
+from cobbler import item_repo
+from cobbler import item_image
+from cobbler import item_mgmtclass
+from cobbler import item_package
+from cobbler import item_file
+
+from cobbler.utils import _
+from cobbler.cexceptions import CX
+
 
 class Collection:
+    """
+    Base class for any serializable list of things.
+    """
 
-    def __init__(self,config):
+    def __init__(self, collection_mgr):
         """
         Constructor.
         """
-        self.config = config
-        self.clear()
-        self.api = self.config.api
+        self.collection_mgr = collection_mgr
+        self.listing = {}
+        self.api = self.collection_mgr.api
         self.lite_sync = None
         self.lock = Lock()
 
-    def factory_produce(self,config,seed_data):
+
+    def __iter__(self):
+        """
+        Iterator for the collection.  Allows list comprehensions, etc.
+        """
+        for a in self.listing.values():
+            yield a
+
+
+    def __len__(self):
+        """
+        Returns size of the collection.
+        """
+        return len(self.listing.values())
+
+
+    def factory_produce(self, collection_mgr, seed_data):
         """
         Must override in subclass.  Factory_produce returns an Item object
-        from datastructure seed_data
+        from dict
         """
         raise exceptions.NotImplementedError
 
-    def clear(self):
+
+    def remove(self, name, with_delete=True, with_sync=True, with_triggers=True, recursive=False, logger=None):
         """
-        Forget about objects in the collection.
+        Remove an item from collection. This method must be overriden in any subclass.
+
+        @param: str name (item name)
+        @param: bool with_delete (sync and run triggers)
+        @param: bool with_sync (sync to server file system)
+        @param: bool with_triggers (run "on delete" triggers)
+        @param: bool recursive (recursively delete children)
+        @param: clogger logger (logger object)
+        @returns: exceptions.NotImplementedError
         """
-        self.listing = {}
+        raise exceptions.NotImplementedError
+
 
     def get(self, name):
         """
         Return object with name in the collection
         """
         return self.listing.get(name.lower(), None)
-        
+
+
     def find(self, name=None, return_list=False, no_errors=False, **kargs):
         """
         Return first object in the collection that maches all item='value'
@@ -78,7 +106,6 @@ class Collection:
         When return_list is set, can also return a list.  Empty list
         would be returned instead of None in that case.
         """
-
         matches = []
 
         # support the old style innovation without kwargs
@@ -92,14 +119,16 @@ class Collection:
             raise CX(_("calling find with no arguments"))
 
         # performance: if the only key is name we can skip the whole loop
-        if len(kargs) == 1 and kargs.has_key("name") and not return_list:
+        if len(kargs) == 1 and "name" in kargs and not return_list:
             return self.listing.get(kargs["name"].lower(), None)
 
         self.lock.acquire()
-        for (name, obj) in self.listing.iteritems():
-            if obj.find_match(kargs, no_errors=no_errors):
-                matches.append(obj)
-        self.lock.release()
+        try:
+            for (name, obj) in self.listing.iteritems():
+                if obj.find_match(kargs, no_errors=no_errors):
+                    matches.append(obj)
+        finally:
+            self.lock.release()
 
         if not return_list:
             if len(matches) == 0:
@@ -108,102 +137,103 @@ class Collection:
         else:
             return matches
 
-
     SEARCH_REKEY = {
-           'kopts'           : 'kernel_options',
-           'kopts_post'      : 'kernel_options_post',
-           'ksmeta'          : 'ks_meta',
-           'inherit'         : 'parent',
-           'ip'              : 'ip_address',
-           'mac'             : 'mac_address',
-           'virt-auto-boot'  : 'virt_auto_boot',
-           'virt-file-size'  : 'virt_file_size',
-           'virt-disk-driver': 'virt_disk_driver',
-           'virt-ram'        : 'virt_ram',
-           'virt-path'       : 'virt_path',
-           'virt-type'       : 'virt_type',
-           'virt-bridge'     : 'virt_bridge',
-           'virt-cpus'       : 'virt_cpus',
-           'virt-host'       : 'virt_host',
-           'virt-group'      : 'virt_group',
-           'dhcp-tag'        : 'dhcp_tag',
-           'netboot-enabled' : 'netboot_enabled',
-           'ldap-enabled'    : 'ldap_enabled',
-           'monit-enabled'   : 'monit_enabled'
+        'kopts': 'kernel_options',
+        'kopts_post': 'kernel_options_post',
+        'inherit': 'parent',
+        'ip': 'ip_address',
+        'mac': 'mac_address',
+        'virt-auto-boot': 'virt_auto_boot',
+        'virt-file-size': 'virt_file_size',
+        'virt-disk-driver': 'virt_disk_driver',
+        'virt-ram': 'virt_ram',
+        'virt-path': 'virt_path',
+        'virt-type': 'virt_type',
+        'virt-bridge': 'virt_bridge',
+        'virt-cpus': 'virt_cpus',
+        'virt-host': 'virt_host',
+        'virt-group': 'virt_group',
+        'dhcp-tag': 'dhcp_tag',
+        'netboot-enabled': 'netboot_enabled',
     }
 
-    def __rekey(self,hash):
+
+    def __rekey(self, _dict):
         """
-        Find calls from the command line ("cobbler system find") 
+        Find calls from the command line ("cobbler system find")
         don't always match with the keys from the datastructs and this
         makes them both line up without breaking compatibility with either.
         Thankfully we don't have a LOT to remap.
         """
-        newhash = {}
-        for x in hash.keys():
-           if self.SEARCH_REKEY.has_key(x):
-              newkey = self.SEARCH_REKEY[x]
-              newhash[newkey] = hash[x]
-           else:
-              newhash[x] = hash[x]   
-        return newhash
+        new_dict = {}
+        for x in _dict.keys():
+            if x in self.SEARCH_REKEY:
+                newkey = self.SEARCH_REKEY[x]
+                new_dict[newkey] = _dict[x]
+            else:
+                new_dict[x] = _dict[x]
+        return new_dict
 
-    def to_datastruct(self):
+
+    def to_list(self):
         """
         Serialize the collection
         """
-        self.lock.acquire()
-        datastruct = [x.to_datastruct() for x in self.listing.values()]
-        self.lock.release()
-        return datastruct
+        _list = [x.to_dict() for x in self.listing.values()]
+        return _list
 
-    def from_datastruct(self,datastruct):
-        if datastruct is None:
+
+    def from_list(self, _list):
+        if _list is None:
             return
-        for seed_data in datastruct:
-            item = self.factory_produce(self.config,seed_data)
+        for item_dict in _list:
+            item = self.factory_produce(self.collection_mgr, item_dict)
             self.add(item)
 
-    def copy(self,ref,newname,logger=None): 
-        ref       = ref.make_clone()
-        ref.uid   = self.config.generate_uid()
+
+    def copy(self, ref, newname, logger=None):
+        ref = ref.make_clone()
+        ref.uid = self.collection_mgr.generate_uid()
         ref.ctime = 0
         ref.set_name(newname)
         if ref.COLLECTION_TYPE == "system":
             # this should only happen for systems
             for iname in ref.interfaces.keys():
                 # clear all these out to avoid DHCP/DNS conflicts
-                ref.set_dns_name("",iname)
-                ref.set_mac_address("",iname)
-                ref.set_ip_address("",iname)
-        return self.add(ref,save=True,with_copy=True,with_triggers=True,with_sync=True,check_for_duplicate_names=True,check_for_duplicate_netinfo=False)
+                ref.set_dns_name("", iname)
+                ref.set_mac_address("", iname)
+                ref.set_ip_address("", iname)
 
-    def rename(self,ref,newname,with_sync=True,with_triggers=True,logger=None):
+        self.add(
+            ref, save=True, with_copy=True, with_triggers=True, with_sync=True,
+            check_for_duplicate_names=True, check_for_duplicate_netinfo=False)
+
+
+    def rename(self, ref, newname, with_sync=True, with_triggers=True, logger=None):
         """
         Allows an object "ref" to be given a newname without affecting the rest
-        of the object tree. 
+        of the object tree.
         """
-
         # Nothing to do when it is the same name
         if newname == ref.name:
-            return True
-            
+            return
+
         # make a copy of the object, but give it a new name.
         oldname = ref.name
         newref = ref.make_clone()
         newref.set_name(newname)
 
-        self.add(newref, with_triggers=with_triggers,save=True)
+        self.add(newref, with_triggers=with_triggers, save=True)
 
         # for mgmt classes, update all objects that use it
         if ref.COLLECTION_TYPE == "mgmtclass":
-            for what in ["distro","profile","system"]:
-                items = self.api.find_items(what,{"mgmt_classes":oldname})
+            for what in ["distro", "profile", "system"]:
+                items = self.api.find_items(what, {"mgmt_classes": oldname})
                 for item in items:
-                    for i in range(0,len(item.mgmt_classes)):
+                    for i in range(0, len(item.mgmt_classes)):
                         if item.mgmt_classes[i] == oldname:
                             item.mgmt_classes[i] = newname
-                    self.api.add_item(what,item,save=True)
+                    self.api.add_item(what, item, save=True)
 
         # for a repo, rename the mirror directory
         if ref.COLLECTION_TYPE == "repo":
@@ -222,8 +252,8 @@ class Collection:
             # test to see if the distro path is based directly
             # on the name of the distro. If it is, things need
             # to updated accordingly
-            if os.path.exists(path) and path == "/var/www/cobbler/ks_mirror/%s" % ref.name:
-                newpath = "/var/www/cobbler/ks_mirror/%s" % newref.name
+            if os.path.exists(path) and path == "/var/www/cobbler/distro_mirror/%s" % ref.name:
+                newpath = "/var/www/cobbler/distro_mirror/%s" % newref.name
                 os.renames(path, newpath)
 
                 # update any reference to this path ...
@@ -232,7 +262,7 @@ class Collection:
                     if d.kernel.find(path) == 0:
                         d.set_kernel(d.kernel.replace(path, newpath))
                         d.set_initrd(d.initrd.replace(path, newpath))
-                        self.config.serialize_item(self, d)
+                        self.collection_mgr.serialize_item(self, d)
 
         # now descend to any direct ancestors and point them at the new object allowing
         # the original object to be removed without orphanage.  Direct ancestors
@@ -242,54 +272,49 @@ class Collection:
         kids = ref.get_children()
         for k in kids:
             if k.COLLECTION_TYPE == "distro":
-               raise CX(_("internal error, not expected to have distro child objects"))
+                raise CX(_("internal error, not expected to have distro child objects"))
             elif k.COLLECTION_TYPE == "profile":
-               if k.parent != "":
-                  k.set_parent(newname)
-               else:
-                  k.set_distro(newname)
-               self.api.profiles().add(k, save=True, with_sync=with_sync, with_triggers=with_triggers)
+                if k.parent != "":
+                    k.set_parent(newname)
+                else:
+                    k.set_distro(newname)
+                self.api.profiles().add(k, save=True, with_sync=with_sync, with_triggers=with_triggers)
             elif k.COLLECTION_TYPE == "system":
-               k.set_profile(newname)
-               self.api.systems().add(k, save=True, with_sync=with_sync, with_triggers=with_triggers)
+                k.set_profile(newname)
+                self.api.systems().add(k, save=True, with_sync=with_sync, with_triggers=with_triggers)
             elif k.COLLECTION_TYPE == "repo":
-               raise CX(_("internal error, not expected to have repo child objects"))
+                raise CX(_("internal error, not expected to have repo child objects"))
             else:
-               raise CX(_("internal error, unknown child type (%s), cannot finish rename" % k.COLLECTION_TYPE))
-       
+                raise CX(_("internal error, unknown child type (%s), cannot finish rename" % k.COLLECTION_TYPE))
+
         # now delete the old version
         self.remove(oldname, with_delete=True, with_triggers=with_triggers)
-        return True
+        return
 
 
-    def add(self,ref,save=False,with_copy=False,with_triggers=True,with_sync=True,quick_pxe_update=False,check_for_duplicate_names=False,check_for_duplicate_netinfo=False,logger=None):
+    def add(self, ref, save=False, with_copy=False, with_triggers=True, with_sync=True, quick_pxe_update=False,
+            check_for_duplicate_names=False, check_for_duplicate_netinfo=False, logger=None):
         """
-        Add an object to the collection, if it's valid.  Returns True
-        if the object was added to the collection.  Returns False if the
-        object specified by ref deems itself invalid (and therefore
-        won't be added to the collection).
+        Add an object to the collection
 
         with_copy is a bit of a misnomer, but lots of internal add operations
         can run with "with_copy" as False. True means a real final commit, as if
-        entered from the command line (or basically, by a user).  
- 
-        With with_copy as False, the particular add call might just be being run 
+        entered from the command line (or basically, by a user).
+
+        With with_copy as False, the particular add call might just be being run
         during deserialization, in which case extra semantics around the add don't really apply.
         So, in that case, don't run any triggers and don't deal with any actual files.
-
         """
-    
-        if ref is None or ref.name is None:
-           return False
+        if ref is None:
+            raise CX("Unable to add a None object")
+        if ref.name is None:
+            raise CX("Unable to add an object without a name")
 
-        try:
-            ref.check_if_valid()
-        except CX, error:
-            return False
+        ref.check_if_valid()
 
         if ref.uid == '':
-           ref.uid = self.config.generate_uid()
-        
+            ref.uid = self.collection_mgr.generate_uid()
+
         if save is True:
             now = time.time()
             if ref.ctime == 0:
@@ -297,7 +322,7 @@ class Collection:
             ref.mtime = now
 
         if self.lite_sync is None:
-            self.lite_sync = action_litesync.BootLiteSync(self.config, logger=logger)
+            self.lite_sync = action_litesync.CobblerLiteSync(self.collection_mgr, logger=logger)
 
         # migration path for old API parameter that I've renamed.
         if with_copy and not save:
@@ -308,28 +333,29 @@ class Collection:
             # if not saving the object, you can't run these features
             with_triggers = False
             with_sync = False
-        
+
         # Avoid adding objects to the collection
         # if an object of the same/ip/mac already exists.
-        self.__duplication_checks(ref,check_for_duplicate_names,check_for_duplicate_netinfo)
+        self.__duplication_checks(ref, check_for_duplicate_names, check_for_duplicate_netinfo)
 
         if ref.COLLECTION_TYPE != self.collection_type():
             raise CX(_("API error: storing wrong data type in collection"))
 
-        if not save:
-            # don't need to run triggers, so add it already ...
+        # failure of a pre trigger will prevent the object from being added
+        if save and with_triggers:
+            utils.run_triggers(self.api, ref, "/var/lib/cobbler/triggers/add/%s/pre/*" % self.collection_type())
+
+        self.lock.acquire()
+        try:
             self.listing[ref.name.lower()] = ref
+        finally:
+            self.lock.release()
 
         # perform filesystem operations
         if save:
-            # failure of a pre trigger will prevent the object from being added
-            if with_triggers:
-                utils.run_triggers(self.api, ref,"/var/lib/cobbler/triggers/add/%s/pre/*" % self.collection_type(), [], logger)
-            self.listing[ref.name.lower()] = ref
-
             # save just this item if possible, if not, save
             # the whole collection
-            self.config.serialize_item(self, ref)
+            self.collection_mgr.serialize_item(self, ref)
 
             if with_sync:
                 if isinstance(ref, item_system.System):
@@ -341,7 +367,7 @@ class Collection:
                     # we don't need openvz containers to be network bootable
                     if ref.virt_type == "openvz":
                         ref.enable_menu = 0
-                    self.lite_sync.add_single_profile(ref.name) 
+                    self.lite_sync.add_single_profile(ref.name)
                 elif isinstance(ref, item_distro.Distro):
                     self.lite_sync.add_single_distro(ref.name)
                 elif isinstance(ref, item_image.Image):
@@ -363,23 +389,20 @@ class Collection:
             # save the tree, so if neccessary, scripts can examine it.
             if with_triggers:
                 utils.run_triggers(self.api, ref, "/var/lib/cobbler/triggers/change/*", [], logger)
-                utils.run_triggers(self.api, ref,"/var/lib/cobbler/triggers/add/%s/post/*" % self.collection_type(), [], logger)
-    
-    
+                utils.run_triggers(self.api, ref, "/var/lib/cobbler/triggers/add/%s/post/*" % self.collection_type(), [], logger)
+
         # update children cache in parent object
         parent = ref.get_parent()
-        if parent != None:
+        if parent is not None:
             parent.children[ref.name] = ref
 
-        return True
 
-    def __duplication_checks(self,ref,check_for_duplicate_names,check_for_duplicate_netinfo):
+    def __duplication_checks(self, ref, check_for_duplicate_names, check_for_duplicate_netinfo):
         """
         Prevents adding objects with the same name.
         Prevents adding or editing to provide the same IP, or MAC.
         Enforcement is based on whether the API caller requests it.
         """
-
         # always protect against duplicate names
         if check_for_duplicate_names:
             match = None
@@ -404,66 +427,56 @@ class Collection:
 
             if match:
                 raise CX(_("An object already exists with that name.  Try 'edit'?"))
-        
+
         # the duplicate mac/ip checks can be disabled.
         if not check_for_duplicate_netinfo:
             return
-       
+
         if isinstance(ref, item_system.System):
-           for (name, intf) in ref.interfaces.iteritems():
-               match_ip    = []
-               match_mac   = []
-               match_hosts = []
-               input_mac   = intf["mac_address"] 
-               input_ip    = intf["ip_address"]
-               input_dns   = intf["dns_name"]
-               if not self.api.settings().allow_duplicate_macs and input_mac is not None and input_mac != "":
-                   match_mac = self.api.find_system(mac_address=input_mac,return_list=True)   
-               if not self.api.settings().allow_duplicate_ips and input_ip is not None and input_ip != "":
-                   match_ip  = self.api.find_system(ip_address=input_ip,return_list=True) 
-               # it's ok to conflict with your own net info.
+            for (name, intf) in ref.interfaces.iteritems():
+                match_ip = []
+                match_mac = []
+                match_hosts = []
+                input_mac = intf["mac_address"]
+                input_ip = intf["ip_address"]
+                input_dns = intf["dns_name"]
+                if not self.api.settings().allow_duplicate_macs and input_mac is not None and input_mac != "":
+                    match_mac = self.api.find_system(mac_address=input_mac, return_list=True)
+                if not self.api.settings().allow_duplicate_ips and input_ip is not None and input_ip != "":
+                    match_ip = self.api.find_system(ip_address=input_ip, return_list=True)
+                # it's ok to conflict with your own net info.
 
-               if not self.api.settings().allow_duplicate_hostnames and input_dns is not None and input_dns != "":
-                   match_hosts = self.api.find_system(dns_name=input_dns,return_list=True)
+                if not self.api.settings().allow_duplicate_hostnames and input_dns is not None and input_dns != "":
+                    match_hosts = self.api.find_system(dns_name=input_dns, return_list=True)
 
-               for x in match_mac:
-                   if x.name != ref.name:
-                       raise CX(_("Can't save system %s. The MAC address (%s) is already used by system %s (%s)") % (ref.name, intf["mac_address"], x.name, name))
-               for x in match_ip:
-                   if x.name != ref.name:
-                       raise CX(_("Can't save system %s. The IP address (%s) is already used by system %s (%s)") % (ref.name, intf["ip_address"], x.name, name))
-               for x in match_hosts:
-                   if x.name != ref.name:
-                       raise CX(_("Can't save system %s.  The dns name (%s) is already used by system %s (%s)") % (ref.name, intf["dns_name"], x.name, name))
- 
-    def printable(self):
+                for x in match_mac:
+                    if x.name != ref.name:
+                        raise CX(_("Can't save system %s. The MAC address (%s) is already used by system %s (%s)") % (ref.name, intf["mac_address"], x.name, name))
+                for x in match_ip:
+                    if x.name != ref.name:
+                        raise CX(_("Can't save system %s. The IP address (%s) is already used by system %s (%s)") % (ref.name, intf["ip_address"], x.name, name))
+                for x in match_hosts:
+                    if x.name != ref.name:
+                        raise CX(_("Can't save system %s.  The dns name (%s) is already used by system %s (%s)") % (ref.name, intf["dns_name"], x.name, name))
+
+
+    def to_string(self):
         """
         Creates a printable representation of the collection suitable
         for reading by humans or parsing from scripts.  Actually scripts
-        would be better off reading the YAML in the config files directly.
+        would be better off reading the JSON in the collections files
+        directly.
         """
-        values = self.listing.values()[:] # copy the values
-        values.sort() # sort the copy (2.3 fix)
+        values = self.listing.values()[:]   # copy the values
+        values.sort()                       # sort the copy (2.3 fix)
         results = []
-        for i,v in enumerate(values):
-           results.append(v.printable())
+        for i, v in enumerate(values):
+            results.append(v.to_string())
         if len(values) > 0:
-           return "\n\n".join(results)
+            return "\n\n".join(results)
         else:
-           return _("No objects found")
+            return _("No objects found")
 
-    def __iter__(self):
-        """
-	Iterator for the collection.  Allows list comprehensions, etc
-	"""
-        for a in self.listing.values():
-	    yield a
-
-    def __len__(self):
-        """
-	Returns size of the collection
-	"""
-        return len(self.listing.values())
 
     def collection_type(self):
         """
@@ -471,4 +484,4 @@ class Collection:
         """
         return exceptions.NotImplementedError
 
-
+# EOF

@@ -19,49 +19,57 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 """
 
 import resource
-import utils
-from utils import _
-from cexceptions import CX
 
-# this datastructure is described in great detail in item_distro.py -- read the comments there.
+from cobbler import utils
+from cobbler.cexceptions import CX
+from cobbler.utils import _
 
+
+# this data structure is described in item.py
 FIELDS = [
-    [ "uid","",0,"",False,"",0,"str"],
-    ["depth",2,0,"",False,"",0,"float"],
-    ["comment","",0,"Comment",True,"Free form text description",0,"str"],
-    ["ctime",0,0,"",False,"",0,"float"],
-    ["mtime",0,0,"",False,"",0,"float"],
-    ["owners","SETTINGS:default_ownership",0,"Owners",False,"Owners list for authz_ownership (space delimited)",[],"list"],
-    ["name","",0,"Name",True,"Name of file resource",0,"str"],
-    ["is_dir",False,0,"Is Directory",True,"Treat file resource as a directory",0,"bool"],
-    ["action","create",0,"Action",True,"Create or remove file resource",0,"str"],
-    ["group","",0,"Group",True,"The group owner of the file",0,"str"],
-    ["mode","",0,"Mode",True,"The mode of the file",0,"str"],
-    ["owner","",0,"Owner",True,"The owner for the file",0,"str"],
-    ["path","",0,"Path",True,"The path for the file",0,"str"],
-    ["template","",0,"Template",True,"The template for the file",0,"str"]
+    # non-editable in UI (internal)
+    ["ctime", 0, 0, "", False, "", 0, "float"],
+    ["depth", 2, 0, "", False, "", 0, "float"],
+    ["mtime", 0, 0, "", False, "", 0, "float"],
+    ["uid", "", 0, "", False, "", 0, "str"],
+
+    # editable in UI
+    ["action", "create", 0, "Action", True, "Create or remove file resource", 0, "str"],
+    ["comment", "", 0, "Comment", True, "Free form text description", 0, "str"],
+    ["group", "", 0, "Owner group in file system", True, "File owner group in file system", 0, "str"],
+    ["is_dir", False, 0, "Is Directory", True, "Treat file resource as a directory", 0, "bool"],
+    ["mode", "", 0, "Mode", True, "The mode of the file", 0, "str"],
+    ["name", "", 0, "Name", True, "Name of file resource", 0, "str"],
+    ["owner", "", 0, "Owner user in file system", True, "File owner user in file system", 0, "str"],
+    ["owners", "SETTINGS:default_ownership", 0, "Owners", True, "Owners list for authz_ownership (space delimited)", [], "list"],
+    ["path", "", 0, "Path", True, "The path for the file", 0, "str"],
+    ["template", "", 0, "Template", True, "The template for the file", 0, "str"]
 ]
 
+
 class File(resource.Resource):
+    """
+    A Cobbler file object.
+    """
 
     TYPE_NAME = _("file")
     COLLECTION_TYPE = "file"
 
+    #
+    # override some base class methods first (item.Item)
+    #
+
     def make_clone(self):
-        ds = self.to_datastruct()
-        cloned = File(self.config)
-        cloned.from_datastruct(ds)
+
+        _dict = self.to_dict()
+        cloned = File(self.collection_mgr)
+        cloned.from_dict(_dict)
         return cloned
+
 
     def get_fields(self):
         return FIELDS
-    
-    def set_is_dir(self,is_dir):
-        """
-        If true, treat file resource as a directory. Templates are ignored.
-        """
-        self.is_dir = utils.input_boolean(is_dir)
-        return True
+
 
     def check_if_valid(self):
         """
@@ -78,5 +86,18 @@ class File(resource.Resource):
             raise CX("group is required")
         if self.mode is None or self.mode == "":
             raise CX("mode is required")
-        if self.is_dir == False and self.template == "":
+        if not self.is_dir and self.template == "":
             raise CX("Template is required when not a directory")
+
+
+    #
+    # specific methods for item.File
+    #
+
+    def set_is_dir(self, is_dir):
+        """
+        If true, treat file resource as a directory. Templates are ignored.
+        """
+        self.is_dir = utils.input_boolean(is_dir)
+
+# EOF

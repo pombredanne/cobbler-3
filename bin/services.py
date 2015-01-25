@@ -1,5 +1,5 @@
 """
-This module is a mod_wsgi application used to serve up the Cobbler 
+This module is a mod_wsgi application used to serve up the Cobbler
 service URLs.
 
 Copyright 2010, Red Hat, Inc and Others
@@ -19,17 +19,29 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 02110-1301  USA
 """
-import yaml
+
+# Only add standard python modules here. When running under a virtualenv other modules are not
+# available at this point.
 import os
 import urllib
 import cgi
 
-from cobbler.services import CobblerSvc
 
 def application(environ, start_response):
 
+    if 'VIRTUALENV' in environ and environ['VIRTUALENV'] != "":
+        # VIRTUALENV Support
+        # see http://code.google.com/p/modwsgi/wiki/VirtualEnvironments
+        import site
+        import distutils.sysconfig
+        site.addsitedir(distutils.sysconfig.get_python_lib(prefix=environ['VIRTUALENV']))
+        # Now all modules are available even under a virtualenv
+
+    import yaml
+    from cobbler.services import CobblerSvc
+
     my_uri = urllib.unquote(environ['REQUEST_URI'])
-    
+
     form = {}
 
     # canonicalizes uri, mod_python does this, mod_wsgi does not
@@ -40,18 +52,18 @@ def application(environ, start_response):
     label = True
     field = ""
     for t in tokens:
-       if label:
-          field = t
-       else:
-          form[field] = t
-       label = not label
+        if label:
+            field = t
+        else:
+            form[field] = t
+        label = not label
 
     form["query_string"] = cgi.parse_qs(environ['QUERY_STRING'])
 
-    # This MAC header is set by anaconda during a kickstart booted with the 
-    # kssendmac kernel option. The field will appear here as something 
+    # This MAC header is set by anaconda during a kickstart booted with the
+    # kssendmac kernel option. The field will appear here as something
     # like: eth0 XX:XX:XX:XX:XX:XX
-    form["REMOTE_MAC"]  = form.get("HTTP_X_RHN_PROVISIONING_MAC_0", None)
+    form["REMOTE_MAC"] = environ.get("HTTP_X_RHN_PROVISIONING_MAC_0", None)
 
     # REMOTE_ADDR isn't a required wsgi attribute so it may be naive to assume
     # it's always present in this context.
@@ -62,25 +74,25 @@ def application(environ, start_response):
     data = fd.read()
     fd.close()
     ydata = yaml.safe_load(data)
-    remote_port = ydata.get("xmlrpc_port",25151)
+    remote_port = ydata.get("xmlrpc_port", 25151)
 
     # instantiate a CobblerWeb object
-    cw = CobblerSvc(server = "http://127.0.0.1:%s" % remote_port)
+    cw = CobblerSvc(server="http://127.0.0.1:%s" % remote_port)
 
     # check for a valid path/mode
     # handle invalid paths gracefully
-    mode = form.get('op','index')
+    mode = form.get('op', 'index')
 
     # TODO: We could do proper exception handling here and return
     # corresponding HTTP status codes:
 
     # Execute corresponding operation on the CobblerSvc object:
-    func = getattr( cw, mode )
-    content = func( **form )
+    func = getattr(cw, mode)
+    content = func(**form)
 
     content = unicode(content).encode('utf-8')
     status = '200 OK'
-    
+
     if content.find("# *** ERROR ***") != -1:
         status = '500 SERVER ERROR'
         print("possible cheetah template error")
@@ -92,7 +104,7 @@ def application(environ, start_response):
         print("content not found: %s" % my_uri)
         status = "404 NOT FOUND"
 
- #   req.content_type = "text/plain;charset=utf-8"
+    # req.content_type = "text/plain;charset=utf-8"
     response_headers = [('Content-type', 'text/plain;charset=utf-8'),
                         ('Content-Length', str(len(content)))]
     start_response(status, response_headers)

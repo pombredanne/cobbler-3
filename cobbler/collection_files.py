@@ -1,6 +1,4 @@
 """
-Files provide a container for file resources.
-
 Copyright 2010, Kelsey Hightower
 Kelsey Hightower <kelsey.hightower@gmail.com>
 
@@ -20,26 +18,32 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 02110-1301  USA
 """
 
-import item_file as file
-import utils
-import collection
-from cexceptions import CX
-from utils import _
+from cobbler import collection
+from cobbler import item_file as file
+from cobbler import utils
+from cobbler.cexceptions import CX
+from cobbler.utils import _
 
-#--------------------------------------------
 
 class Files(collection.Collection):
+    """
+    Files provide a container for file resources.
+    """
 
     def collection_type(self):
         return "file"
 
-    def factory_produce(self,config,seed_data):
-        """
-        Return a File forged from seed_data
-        """
-        return file.File(config).from_datastruct(seed_data)
 
-    def remove(self,name,with_delete=True,with_sync=True,with_triggers=True,recursive=False,logger=None):
+    def factory_produce(self, collection_mgr, item_dict):
+        """
+        Return a File forged from item_dict
+        """
+        new_file = file.File(collection_mgr)
+        new_file.from_dict(item_dict)
+        return new_file
+
+
+    def remove(self, name, with_delete=True, with_sync=True, with_triggers=True, recursive=False, logger=None):
         """
         Remove element named 'name' from the collection
         """
@@ -48,16 +52,22 @@ class Files(collection.Collection):
         if obj is not None:
             if with_delete:
                 if with_triggers:
-                    utils.run_triggers(self.config.api, obj, "/var/lib/cobbler/triggers/delete/file/*", [], logger)
+                    utils.run_triggers(self.collection_mgr.api, obj, "/var/lib/cobbler/triggers/delete/file/*", [], logger)
 
-            del self.listing[name]
-            self.config.serialize_delete(self, obj)
+            self.lock.acquire()
+            try:
+                del self.listing[name]
+            finally:
+                self.lock.release()
+            self.collection_mgr.serialize_delete(self, obj)
 
             if with_delete:
                 if with_triggers:
-                    utils.run_triggers(self.config.api, obj, "/var/lib/cobbler/triggers/delete/file/post/*", [], logger)
-                    utils.run_triggers(self.config.api, obj, "/var/lib/cobbler/triggers/change/*", [], logger)
+                    utils.run_triggers(self.collection_mgr.api, obj, "/var/lib/cobbler/triggers/delete/file/post/*", [], logger)
+                    utils.run_triggers(self.collection_mgr.api, obj, "/var/lib/cobbler/triggers/change/*", [], logger)
 
-            return True
+            return
 
         raise CX(_("cannot delete an object that does not exist: %s") % name)
+
+# EOF

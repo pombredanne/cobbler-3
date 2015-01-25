@@ -21,20 +21,16 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 02110-1301  USA
 """
 
+import ConfigParser
 import distutils.sysconfig
+import glob
 import os
 import sys
-import glob
+
+from cexceptions import CX
 import clogger
 from utils import _, log_exc
-from cexceptions import *
-import ConfigParser
 
-# python 2.3 compat.  If we don't need that, drop this test
-try:
-    set()
-except:
-    from sets import Set as set
 
 MODULE_CACHE = {}
 MODULES_BY_CATEGORY = {}
@@ -43,16 +39,17 @@ cp = ConfigParser.ConfigParser()
 cp.read("/etc/cobbler/modules.conf")
 
 plib = distutils.sysconfig.get_python_lib()
-mod_path="%s/cobbler/modules" % plib
+mod_path = "%s/cobbler/modules" % plib
 sys.path.insert(0, mod_path)
 sys.path.insert(1, "%s/cobbler" % plib)
+
 
 def load_modules(module_path=mod_path, blacklist=None):
     logger = clogger.Logger()
 
     filenames = glob.glob("%s/*.py" % module_path)
-    filenames = filenames + glob.glob("%s/*.pyc" % module_path)
-    filenames = filenames + glob.glob("%s/*.pyo" % module_path)
+    filenames += glob.glob("%s/*.pyc" % module_path)
+    filenames += glob.glob("%s/*.pyo" % module_path)
 
     mods = set()
 
@@ -73,48 +70,74 @@ def load_modules(module_path=mod_path, blacklist=None):
         mods.add(modname)
 
         try:
-            blip =  __import__("modules.%s" % ( modname), globals(), locals(), [modname])
+            blip = __import__("modules.%s" % (modname), globals(), locals(), [modname])
             if not hasattr(blip, "register"):
                 if not modname.startswith("__init__"):
                     errmsg = _("%(module_path)s/%(modname)s is not a proper module")
-                    print errmsg % {'module_path': module_path, 'modname':modname}
+                    print errmsg % {'module_path': module_path, 'modname': modname}
                 continue
             category = blip.register()
             if category:
                 MODULE_CACHE[modname] = blip
-            if not MODULES_BY_CATEGORY.has_key(category):
+            if category not in MODULES_BY_CATEGORY:
                 MODULES_BY_CATEGORY[category] = {}
             MODULES_BY_CATEGORY[category][modname] = blip
-        except Exception, e:
+        except Exception:
             logger.info('Exception raised when loading module %s' % modname)
             log_exc(logger)
 
     return (MODULE_CACHE, MODULES_BY_CATEGORY)
 
+
 def get_module_by_name(name):
     return MODULE_CACHE.get(name, None)
 
-def get_module_from_file(category,field,fallback_module_name=None,just_name=False):
+
+def get_module_name(category, field, fallback_module_name=None):
+    """
+    Get module name from configuration file
+
+    @param str category field category in configuration file
+    @param str field field in configuration file
+    @param str fallback_module_name default value used if category/field is
+            not found in configuration file
+    @raise CX if unable to find configuration file
+    @return str module name
+    """
 
     try:
-        value = cp.get(category,field)
+        value = cp.get(category, field)
     except:
         if fallback_module_name is not None:
             value = fallback_module_name
         else:
-            raise CX(_("Cannot find config file setting for: %s") % field) 
-    if just_name:
-        return value
-    rc = MODULE_CACHE.get(value, None)
+            raise CX(_("Cannot find config file setting for: %s") % field)
+    return value
+
+
+def get_module_from_file(category, field, fallback_module_name=None):
+    """
+    Get Python module, based on name defined in configuration file
+
+    @param str category field category in configuration file
+    @param str field field in configuration file
+    @param str fallback_module_name default value used if category/field is
+            not found in configuration file
+    @raise CX if unable to load Python module
+    @return module Python module
+    """
+
+    module_name = get_module_name(category, field, fallback_module_name)
+    rc = MODULE_CACHE.get(module_name, None)
     if rc is None:
-        raise CX(_("Failed to load module for %s/%s") % (category,field))
+        raise CX(_("Failed to load module for %s/%s") % (category, field))
     return rc
 
+
 def get_modules_in_category(category):
-    if not MODULES_BY_CATEGORY.has_key(category):
+    if category not in MODULES_BY_CATEGORY:
         return []
     return MODULES_BY_CATEGORY[category].values()
 
 if __name__ == "__main__":
     print load_modules(mod_path)
-

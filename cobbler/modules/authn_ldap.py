@@ -21,8 +21,6 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 
 import distutils.sysconfig
 import sys
-import os
-from utils import _
 import traceback
 
 # we'll import this just a bit later
@@ -30,12 +28,11 @@ import traceback
 # import ldap
 
 plib = distutils.sysconfig.get_python_lib()
-mod_path="%s/cobbler" % plib
+mod_path = "%s/cobbler" % plib
 sys.path.insert(0, mod_path)
 
-import cexceptions
-import utils
 import api as cobbler_api
+
 
 def register():
     """
@@ -44,7 +41,8 @@ def register():
 
     return "authn"
 
-def authenticate(api_handle,username,password):
+
+def authenticate(api_handle, username, password):
     """
     Validate an ldap bind, returning True/False
     """
@@ -52,12 +50,12 @@ def authenticate(api_handle,username,password):
         return False
     import ldap
 
-    server    = api_handle.settings().ldap_server
-    basedn    = api_handle.settings().ldap_base_dn
-    port      = api_handle.settings().ldap_port
-    tls       = api_handle.settings().ldap_tls
+    server = api_handle.settings().ldap_server
+    basedn = api_handle.settings().ldap_base_dn
+    port = str(api_handle.settings().ldap_port)
+    tls = api_handle.settings().ldap_tls
     anon_bind = api_handle.settings().ldap_anonymous_bind
-    prefix    = api_handle.settings().ldap_search_prefix
+    prefix = api_handle.settings().ldap_search_prefix
 
     # Support for LDAP client certificates
     tls_cacertfile = api_handle.settings().ldap_tls_cacertfile
@@ -71,11 +69,11 @@ def authenticate(api_handle,username,password):
         servers = [server]
 
     if tls_cacertfile:
-      ldap.set_option(ldap.OPT_X_TLS_CACERTFILE, tls_cacertfile)
+        ldap.set_option(ldap.OPT_X_TLS_CACERTFILE, tls_cacertfile)
     if tls_keyfile:
-      ldap.set_option(ldap.OPT_X_TLS_KEYFILE, tls_keyfile)
+        ldap.set_option(ldap.OPT_X_TLS_KEYFILE, tls_keyfile)
     if tls_certfile:
-      ldap.set_option(ldap.OPT_X_TLS_CERTFILE, tls_certfile)
+        ldap.set_option(ldap.OPT_X_TLS_CERTFILE, tls_certfile)
 
     uri = ""
     for server in servers:
@@ -85,7 +83,7 @@ def authenticate(api_handle,username,password):
         elif port == '636':
             uri += 'ldaps://' + server
         else:
-            uri += 'ldap://' + "%s:%s" % (server,port)
+            uri += 'ldap://' + "%s:%s" % (server, port)
         uri += ' '
 
     uri = uri.strip()
@@ -97,7 +95,7 @@ def authenticate(api_handle,username,password):
     # and we're not already using old-SSL
     tls = str(tls).lower()
     if port != '636':
-        if tls in [ "on", "true", "yes", "1" ]:
+        if tls in ["on", "true", "yes", "1"]:
             try:
                 dir.start_tls_s()
             except:
@@ -107,7 +105,7 @@ def authenticate(api_handle,username,password):
     # if we're not allowed to search anonymously,
     # grok the search bind settings and attempt to bind
     anon_bind = str(anon_bind).lower()
-    if anon_bind not in [ "on", "true", "yes", "1" ]:
+    if anon_bind not in ["on", "true", "yes", "1"]:
         searchdn = api_handle.settings().ldap_search_bind_dn
         searchpw = api_handle.settings().ldap_search_passwd
 
@@ -125,7 +123,7 @@ def authenticate(api_handle,username,password):
     filter = prefix + username
     result = dir.search_s(basedn, ldap.SCOPE_SUBTREE, filter, [])
     if result:
-        for dn,entry in result:
+        for dn, entry in result:
             # username _should_ be unique so we should only have one result
             # ignore entry; we don't need it
             pass
@@ -134,7 +132,7 @@ def authenticate(api_handle,username,password):
 
     try:
         # attempt to bind as the user
-        dir.simple_bind_s(dn,password)
+        dir.simple_bind_s(dn, password)
         dir.unbind()
         return True
     except:
@@ -143,7 +141,7 @@ def authenticate(api_handle,username,password):
     # catch-all
     return False
 
-if __name__ == "__main__":
-    api_handle = cobbler_api.BootAPI()
-    print authenticate(api_handle, "guest", "guest")
 
+if __name__ == "__main__":
+    api_handle = cobbler_api.CobblerAPI()
+    print authenticate(api_handle, "guest", "guest")

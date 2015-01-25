@@ -20,63 +20,42 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 02110-1301  USA
 """
 
-import sys
-import os
-import re
 import copy
-import socket
-import glob
-import random
-try:
-    import subprocess as sub_process
-except:
-    import sub_process
-import shutil
-import string
-import traceback
 import errno
-import logging
-import shutil
-import tempfile
-import signal
-from cexceptions import *
-import codes
-import time
+import glob
+import hashlib
 import netaddr
+import os
+import random
+import re
 import shlex
-import field_info
-import clogger
-import yaml
-import urllib2
+import shutil
 import simplejson
+import subprocess
+import string
+import sys
+import traceback
+import urllib2
+import yaml
 
-try:
-    import hashlib as fiver
-    def md5(key):
-        return fiver.md5(key)
-except ImportError: 
-    # for Python < 2.5
-    import md5 as fiver
-    def md5(key):
-        return fiver.md5(key)
+from cexceptions import FileNotFoundException, CX
+from cobbler import clogger
+from cobbler import field_info
+from cobbler import validate
 
-# python-netaddr 0.7 broke backward compatability, try to use the old IP
-# classes, and fallback on the newer if there's an import error.
-NETADDR_PRE_0_7 = True
-try:
-    # Try importing the old (pre-0.7) netaddr IP class:
-    from netaddr import IP
-except ImportError:
-    NETADDR_PRE_0_7 = False
 
-CHEETAH_ERROR_DISCLAIMER="""
+def md5(key):
+    return hashlib.md5(key)
+
+
+CHEETAH_ERROR_DISCLAIMER = """
 # *** ERROR ***
 #
-# There is a templating error preventing this file from rendering correctly. 
+# There is a templating error preventing this file from rendering correctly.
 #
 # This is most likely not due to a bug in Cobbler and is something you can fix.
 #
-# Look at the message below to see what things are causing problems.  
+# Look at the message below to see what things are causing problems.
 #
 # (1) Does the template file reference a $variable that is not defined?
 # (2) is there a formatting error in a Cheetah directive?
@@ -87,9 +66,11 @@ CHEETAH_ERROR_DISCLAIMER="""
 #
 """
 
+
 # From http://code.activestate.com/recipes/303342/
 class Translator:
-    allchars = string.maketrans('','')
+    allchars = string.maketrans('', '')
+
     def __init__(self, frm='', to='', delete='', keep=None):
         if len(to) == 1:
             to = to * len(frm)
@@ -98,25 +79,27 @@ class Translator:
             self.delete = delete
         else:
             self.delete = self.allchars.translate(self.allchars, keep.translate(self.allchars, delete))
+
     def __call__(self, s):
         return s.translate(self.trans, self.delete)
 
 
-#placeholder for translation
+# placeholder for translation
 def _(foo):
-   return foo
+    return foo
 
 MODULE_CACHE = {}
 SIGNATURE_CACHE = {}
 
 _re_kernel = re.compile(r'(vmlinu[xz]|kernel.img)')
 _re_initrd = re.compile(r'(initrd(.*).img|ramdisk.image.gz)')
-_re_is_mac = re.compile(':'.join(('[0-9A-Fa-f][0-9A-Fa-f]',)*6) + '$')
-_re_is_ibmac = re.compile(':'.join(('[0-9A-Fa-f][0-9A-Fa-f]',)*20) + '$')
+_re_is_mac = re.compile(':'.join(('[0-9A-Fa-f][0-9A-Fa-f]',) * 6) + '$')
+_re_is_ibmac = re.compile(':'.join(('[0-9A-Fa-f][0-9A-Fa-f]',) * 20) + '$')
 
 # all logging from utils.die goes to the main log even if there
 # is another log.
-main_logger = None #  the logger will be lazy loaded later
+main_logger = None  # the logger will be lazy loaded later
+
 
 def die(logger, msg):
     global main_logger
@@ -126,51 +109,49 @@ def die(logger, msg):
     # log the exception once in the per-task log or the main
     # log if this is not a background op.
     try:
-       raise CX(msg)
+        raise CX(msg)
     except:
-       if logger is not None:
-           log_exc(logger)
-       else:
-           log_exc(main_logger)
+        if logger is not None:
+            log_exc(logger)
+        else:
+            log_exc(main_logger)
 
     # now re-raise it so the error can fail the operation
     raise CX(msg)
+
 
 def log_exc(logger):
     """
     Log an exception.
     """
     (t, v, tb) = sys.exc_info()
-    logger.info("Exception occured: %s" % t )
+    logger.info("Exception occured: %s" % t)
     logger.info("Exception value: %s" % v)
     logger.info("Exception Info:\n%s" % string.join(traceback.format_list(traceback.extract_tb(tb))))
-   
 
-def get_exc(exc,full=True):
-   (t, v, tb) = sys.exc_info()
-   buf = ""
-   try:
-      getattr(exc, "from_cobbler")
-      buf = str(exc)[1:-1] + "\n"
-   except:
-      if not full:
-          buf = buf + str(t)
-      buf = "%s\n%s" % (buf,v)
-      if full:
-          buf = buf + "\n" + "\n".join(traceback.format_list(traceback.extract_tb(tb)))
-   return buf
 
-def cheetah_exc(exc,full=False):
-   lines = get_exc(exc).split("\n")
-   buf = ""
-   for l in lines:
-      buf = buf + "# %s\n" % l
-   return CHEETAH_ERROR_DISCLAIMER + buf
+def get_exc(exc, full=True):
+    (t, v, tb) = sys.exc_info()
+    buf = ""
+    try:
+        getattr(exc, "from_cobbler")
+        buf = str(exc)[1:-1] + "\n"
+    except:
+        if not full:
+            buf += str(t)
+        buf = "%s\n%s" % (buf, v)
+        if full:
+            buf += "\n" + "\n".join(traceback.format_list(traceback.extract_tb(tb)))
+    return buf
 
-def trace_me():
-   x = traceback.extract_stack()
-   bar = string.join(traceback.format_list(x))
-   return bar
+
+def cheetah_exc(exc, full=False):
+    lines = get_exc(exc).split("\n")
+    buf = ""
+    for l in lines:
+        buf += "# %s\n" % l
+    return CHEETAH_ERROR_DISCLAIMER + buf
+
 
 def pretty_hex(ip, length=8):
     """
@@ -182,20 +163,16 @@ def pretty_hex(ip, length=8):
         hexval = '0' * (length - len(hexval)) + hexval
     return hexval.upper()
 
+
 def get_host_ip(ip, shorten=True):
     """
     Return the IP encoding needed for the TFTP boot tree.
     """
-    cidr = None
 
-    if NETADDR_PRE_0_7:
-        ip = netaddr.IP(ip)
-        cidr = ip.cidr()
-    else:
-        ip = netaddr.ip.IPAddress(ip)
-        cidr = netaddr.ip.IPNetwork(ip)
+    ip = netaddr.ip.IPAddress(ip)
+    cidr = netaddr.ip.IPNetwork(ip)
 
-    if len(cidr) == 1: # Just an IP, e.g. a /32
+    if len(cidr) == 1:  # Just an IP, e.g. a /32
         return pretty_hex(ip)
     else:
         pretty = pretty_hex(cidr[0])
@@ -206,23 +183,21 @@ def get_host_ip(ip, shorten=True):
             cutoff = (32 - cidr.prefixlen) / 4
             return pretty[0:-cutoff]
 
-def _IP(ip):
-   """
-   Returns a netaddr.IP object representing ip.
-   If ip is already an netaddr.IP instance just return it.
-   Else return a new instance
-   """
-   ip_class = None
-   if NETADDR_PRE_0_7:
-       ip_class = netaddr.IP
-   else:
-        ip_class = netaddr.ip.IPAddress
-   if isinstance(ip, ip_class) or ip == "":
-      return ip
-   else:
-      return ip_class(ip)
 
-def get_config_filename(sys,interface):
+def _IP(ip):
+    """
+    Returns a netaddr.IP object representing ip.
+    If ip is already an netaddr.IP instance just return it.
+    Else return a new instance
+    """
+    ip_class = netaddr.ip.IPAddress
+    if isinstance(ip, ip_class) or ip == "":
+        return ip
+    else:
+        return ip_class(ip)
+
+
+def get_config_filename(sys, interface):
     """
     The configuration file for each system pxe uses is either
     a form of the MAC address of the hex version of the IP.  If none
@@ -233,13 +208,13 @@ def get_config_filename(sys,interface):
     """
 
     interface = str(interface)
-    if not sys.interfaces.has_key(interface):
+    if interface not in sys.interfaces:
         return None
 
     if sys.name == "default":
         return "default"
     mac = sys.get_mac_address(interface)
-    ip  = sys.get_ip_address(interface)
+    ip = sys.get_ip_address(interface)
     if mac is not None and mac != "":
         return "01-" + "-".join(mac.split(":")).lower()
     elif ip is not None and ip != "":
@@ -267,60 +242,52 @@ def is_mac(strdata):
         return False
     return bool(_re_is_mac.match(strdata) or _re_is_ibmac.match(strdata))
 
-def get_random_mac(api_handle,virt_type="xenpv"):
+
+def get_random_mac(api_handle, virt_type="xenpv"):
     """
     Generate a random MAC address.
     from xend/server/netif.py
     return: MAC address string
     """
     if virt_type.startswith("vmware"):
-        mac = [ 0x00, 0x50, 0x56,
+        mac = [
+            0x00, 0x50, 0x56,
             random.randint(0x00, 0x3f),
             random.randint(0x00, 0xff),
             random.randint(0x00, 0xff)
         ]
     elif virt_type.startswith("xen") or virt_type.startswith("qemu") or virt_type.startswith("kvm"):
-        mac = [ 0x00, 0x16, 0x3e,
+        mac = [
+            0x00, 0x16, 0x3e,
             random.randint(0x00, 0x7f),
             random.randint(0x00, 0xff),
-            random.randint(0x00, 0xff) 
+            random.randint(0x00, 0xff)
         ]
     else:
         raise CX("virt mac assignment not yet supported")
 
-        
     mac = ':'.join(map(lambda x: "%02x" % x, mac))
     systems = api_handle.systems()
-    while ( systems.find(mac_address=mac) ):
+    while (systems.find(mac_address=mac)):
         mac = get_random_mac(api_handle)
 
     return mac
 
 
-def resolve_ip(strdata):
-    """
-    Resolve the IP address and handle errors...
-    """
-    try:
-        return socket.gethostbyname(strdata)
-    except:
-        return None
-
-
-def find_matching_files(directory,regex):
+def find_matching_files(directory, regex):
     """
     Find all files in a given directory that match a given regex.
     Can't use glob directly as glob doesn't take regexen.
     """
-    files = glob.glob(os.path.join(directory,"*"))
+    files = glob.glob(os.path.join(directory, "*"))
     results = []
     for f in files:
-       if regex.match(os.path.basename(f)):
-           results.append(f)
+        if regex.match(os.path.basename(f)):
+            results.append(f)
     return results
 
 
-def find_highest_files(directory,unversioned,regex):
+def find_highest_files(directory, unversioned, regex):
     """
     Find the highest numbered file (kernel or initrd numbering scheme)
     in a given directory that matches a given pattern.  Used for
@@ -328,10 +295,11 @@ def find_highest_files(directory,unversioned,regex):
     """
     files = find_matching_files(directory, regex)
     get_numbers = re.compile(r'(\d+).(\d+).(\d+)')
+
     def max2(a, b):
         """Returns the larger of the two values"""
-        av  = get_numbers.search(os.path.basename(a)).groups()
-        bv  = get_numbers.search(os.path.basename(b)).groups()
+        av = get_numbers.search(os.path.basename(a)).groups()
+        bv = get_numbers.search(os.path.basename(b)).groups()
 
         ret = cmp(av[0], bv[0]) or cmp(av[1], bv[1]) or cmp(av[2], bv[2])
         if ret < 0:
@@ -343,7 +311,7 @@ def find_highest_files(directory,unversioned,regex):
 
     # couldn't find a highest numbered file, but maybe there
     # is just a 'vmlinuz' or an 'initrd.img' in this directory?
-    last_chance = os.path.join(directory,unversioned)
+    last_chance = os.path.join(directory, unversioned)
     if os.path.exists(last_chance):
         return last_chance
     return None
@@ -358,15 +326,15 @@ def find_kernel(path):
         return None
 
     if os.path.isfile(path):
-        #filename = os.path.basename(path)
-        #if _re_kernel.match(filename):
+        # filename = os.path.basename(path)
+        # if _re_kernel.match(filename):
         #   return path
-        #elif filename == "vmlinuz":
+        # elif filename == "vmlinuz":
         #   return path
         return path
 
     elif os.path.isdir(path):
-        return find_highest_files(path,"vmlinuz",_re_kernel)
+        return find_highest_files(path, "vmlinuz", _re_kernel)
 
     # For remote URLs we expect an absolute path, and will not
     # do any searching for the latest:
@@ -375,10 +343,11 @@ def find_kernel(path):
 
     return None
 
-def remove_yum_olddata(path,logger=None):
+
+def remove_yum_olddata(path, logger=None):
     """
     Delete .olddata files that might be present from a failed run
-    of createrepo.  
+    of createrepo.
     # FIXME: verify this is still being used
     """
     trythese = [
@@ -392,7 +361,8 @@ def remove_yum_olddata(path,logger=None):
         if os.path.exists(olddata):
             if logger is not None:
                 logger.info("removing: %s" % olddata)
-            shutil.rmtree(olddata, ignore_errors=False, onerror=None)  
+            shutil.rmtree(olddata, ignore_errors=False, onerror=None)
+
 
 def find_initrd(path):
     """
@@ -404,15 +374,15 @@ def find_initrd(path):
         return None
 
     if os.path.isfile(path):
-        #filename = os.path.basename(path)
-        #if _re_initrd.match(filename):
+        # filename = os.path.basename(path)
+        # if _re_initrd.match(filename):
         #   return path
-        #if filename == "initrd.img" or filename == "initrd":
+        # if filename == "initrd.img" or filename == "initrd":
         #   return path
         return path
 
     elif os.path.isdir(path):
-        return find_highest_files(path,"initrd.img",_re_initrd)
+        return find_highest_files(path, "initrd.img", _re_initrd)
 
     # For remote URLs we expect an absolute path, and will not
     # do any searching for the latest:
@@ -422,34 +392,12 @@ def find_initrd(path):
     return None
 
 
-def find_kickstart(url):
-    """
-    Check if a kickstart url looks like an http, ftp, nfs or local path.
-    If a local path is used, cobbler will copy the kickstart and serve
-    it over http.
-
-    Return None if the url format does not look valid.
-    """
-    if url is None:
-        return None
-    x = url.lstrip()
-    for y in ["http://", "nfs://", "ftp://", "/"]:
-       # make sure we get a lower-case protocol without 
-       # affecting the rest of the string
-       x = re.sub(r"(?i)%s" % y, y, x, count=1)
-       if x.startswith(y):
-           if x.startswith("/") and not os.path.isfile(x):
-               return None
-           return x
-    return None
-
-
 def read_file_contents(file_location, logger=None, fetch_if_remote=False):
     """
     Reads the contents of a file, which could be referenced locally
     or as a URI.
 
-    Returns None if file is remote and templating of remote files is 
+    Returns None if file is remote and templating of remote files is
     disabled.
 
     Throws a FileNotFoundException if the file does not exist at the
@@ -462,8 +410,7 @@ def read_file_contents(file_location, logger=None, fetch_if_remote=False):
         if not os.path.exists(file_location):
             if logger:
                 logger.warning("File does not exist: %s" % file_location)
-            raise FileNotFoundException("%s: %s" % (_("File not found"), 
-                file_location))
+            raise FileNotFoundException("%s: %s" % (_("File not found"), file_location))
 
         try:
             f = open(file_location)
@@ -489,8 +436,7 @@ def read_file_contents(file_location, logger=None, fetch_if_remote=False):
             # File likely doesn't exist
             if logger:
                 logger.warning("File does not exist: %s" % file_location)
-            raise FileNotFoundException("%s: %s" % (_("File not found"), 
-                file_location))
+            raise FileNotFoundException("%s: %s" % (_("File not found"), file_location))
 
 
 def remote_file_exists(file_url):
@@ -505,7 +451,7 @@ def remote_file_exists(file_url):
 
 
 def file_is_remote(file_location):
-    """ 
+    """
     Returns true if the file is remote and referenced via a protocol
     we support.
     """
@@ -522,18 +468,19 @@ def input_string_or_list(options):
     Accepts a delimited list of stuff or a list, but always returns a list.
     """
     if options == "<<inherit>>":
-       return "<<inherit>>"
+        return "<<inherit>>"
     if options is None or options == "" or options == "delete":
-       return []
-    elif isinstance(options,list):
-       return options
-    elif isinstance(options,basestring):
-       tokens = shlex.split(options)
-       return tokens
+        return []
+    elif isinstance(options, list):
+        return options
+    elif isinstance(options, basestring):
+        tokens = shlex.split(options)
+        return tokens
     else:
-       raise CX(_("invalid input type"))
+        raise CX(_("invalid input type"))
 
-def input_string_or_hash(options,allow_multiples=True):
+
+def input_string_or_dict(options, allow_multiples=True):
     """
     Older cobbler files stored configurations in a flat way, such that all values for strings.
     Newer versions of cobbler allow dictionaries.  This function is used to allow loading
@@ -551,14 +498,14 @@ def input_string_or_hash(options,allow_multiples=True):
         new_dict = {}
         tokens = shlex.split(options)
         for t in tokens:
-            tokens2 = t.split("=",1)
+            tokens2 = t.split("=", 1)
             if len(tokens2) == 1:
                 # this is a singleton option, no value
                 key = tokens2[0]
                 value = None
             else:
                 key = tokens2[0]
-                value = tokens2[1] 
+                value = tokens2[1]
 
             # if we're allowing multiple values for the same key,
             # check to see if this token has already been
@@ -578,299 +525,259 @@ def input_string_or_hash(options,allow_multiples=True):
         new_dict.pop('', None)
         return (True, new_dict)
     elif isinstance(options, dict):
-        options.pop('',None)
+        options.pop('', None)
         return (True, options)
     else:
         raise CX(_("invalid input type"))
 
+
 def input_boolean(value):
     value = str(value)
-    if value.lower() in [ "true", "1", "on", "yes", "y" ]:
-       return True
+    if value.lower() in ["true", "1", "on", "yes", "y"]:
+        return True
     else:
-       return False
+        return False
+
 
 def update_settings_file(data):
-    if 1:#try:
-        #clogger.Logger().debug("in update_settings_file(): value is: %s" % str(value))
-        settings_file = file("/etc/cobbler/settings","w")
-        yaml.safe_dump(data,settings_file)
+    if 1:
+        # clogger.Logger().debug("in update_settings_file(): value is: %s" % str(value))
+        settings_file = file("/etc/cobbler/settings", "w")
+        yaml.safe_dump(data, settings_file)
         settings_file.close()
         return True
-    #except:
+    # except:
     #    return False
 
-def grab_tree(api_handle, obj):
+
+def grab_tree(api_handle, item):
     """
     Climb the tree and get every node.
     """
     settings = api_handle.settings()
-    results = [ obj ]
-    parent = obj.get_parent()
+    results = [item]
+    parent = item.get_parent()
     while parent is not None:
-       results.append(parent)
-       parent = parent.get_parent()
-    results.append(settings)  
+        results.append(parent)
+        parent = parent.get_parent()
+    results.append(settings)
     return results
 
-def blender(api_handle,remove_hashes, root_obj):
+
+def blender(api_handle, remove_dicts, root_obj):
     """
     Combine all of the data in an object tree from the perspective
-    of that point on the tree, and produce a merged hash containing
+    of that point on the tree, and produce a merged dictionary containing
     consolidated data.
     """
- 
-    settings = api_handle.settings()
+
     tree = grab_tree(api_handle, root_obj)
     tree.reverse()  # start with top of tree, override going down
     results = {}
     for node in tree:
-        __consolidate(node,results)
-
-    # hack -- s390 nodes get additional default kernel options
-    arch = results.get("arch","?")
-    if arch.startswith("s390"):
-        keyz = settings.kernel_options_s390x.keys()
-        for k in keyz:
-           if not results.has_key(k):
-               results["kernel_options"][k] = settings.kernel_options_s390x[k]
-
-    # Get topmost object to determine which breed we're dealing with
-    parent = root_obj.get_parent()
-    if parent is None:
-        parent = root_obj
-
-    while parent.COLLECTION_TYPE is "profile" or parent.COLLECTION_TYPE is "system":
-        parent = parent.get_parent()
-
-    breed = parent.breed
-
-    if breed == "redhat":
-        # determine if we have room to add kssendmac to the kernel options line
-        kernel_txt = hash_to_string(results["kernel_options"])
-        if len(kernel_txt) < 244:
-            results["kernel_options"]["kssendmac"] = None
-
-    # convert post kernel options to string
-    if results.has_key("kernel_options_post"):
-        results["kernel_options_post"] = hash_to_string(results["kernel_options_post"])
-
+        __consolidate(node, results)
 
     # make interfaces accessible without Cheetah-voodoo in the templates
     # EXAMPLE:  $ip == $ip0, $ip1, $ip2 and so on.
- 
-    if root_obj.COLLECTION_TYPE == "system":
-        for (name,interface) in root_obj.interfaces.iteritems():
-            for key in interface.keys():
-                results["%s_%s" % (key,name)] = interface[key]
-                # just to keep templates backwards compatibile
-                if name == "intf0":
-                    # prevent stomping on profile variables, which really only happens
-                    # with the way we check for virt_bridge, which is a profile setting
-                    # and an interface setting
-                    if not results.has_key(key):
-                        results[key] = interface[key]
 
-    # if the root object is a profile or system, add in all 
+    if root_obj.COLLECTION_TYPE == "system":
+        for (name, interface) in root_obj.interfaces.iteritems():
+            for key in interface.keys():
+                results["%s_%s" % (key, name)] = interface[key]
+
+    # if the root object is a profile or system, add in all
     # repo data for repos that belong to the object chain
-    if root_obj.COLLECTION_TYPE in ("profile","system"):
+    if root_obj.COLLECTION_TYPE in ("profile", "system"):
         repo_data = []
-        for r in results.get("repos",[]):
+        for r in results.get("repos", []):
             repo = api_handle.find_repo(name=r)
             if repo:
-                repo_data.append(repo.to_datastruct())
-        # FIXME: sort the repos in the array based on the 
+                repo_data.append(repo.to_dict())
+        # FIXME: sort the repos in the array based on the
         #        repo priority field so that lower priority
         #        repos come first in the array
         results["repo_data"] = repo_data
 
-    http_port = results.get("http_port",80)
+    http_port = results.get("http_port", 80)
     if http_port not in (80, "80"):
-       results["http_server"] = "%s:%s" % (results["server"] , http_port)
+        results["http_server"] = "%s:%s" % (results["server"], http_port)
     else:
-       results["http_server"] = results["server"]
+        results["http_server"] = results["server"]
 
-    mgmt_parameters = results.get("mgmt_parameters",{})
-    mgmt_parameters.update(results.get("ks_meta", {}))
+    mgmt_parameters = results.get("mgmt_parameters", {})
+    mgmt_parameters.update(results.get("autoinstall_meta", {}))
     results["mgmt_parameters"] = mgmt_parameters
- 
-    # sanitize output for koan and kernel option lines, etc
-    if remove_hashes:
-        results = flatten(results)
 
-    # the password field is inputed as escaped strings but Cheetah
-    # does weird things when expanding it due to multiple dollar signs
-    # so this is the workaround
-    if results.has_key("default_password_crypted"):
-        results["default_password_crypted"] = results["default_password_crypted"].replace("\$","$")
+    # sanitize output for koan and kernel option lines, etc
+    if remove_dicts:
+        results = flatten(results)
 
     # add in some variables for easier templating
     # as these variables change based on object type
-    if results.has_key("interfaces"):
+    if "interfaces" in results:
         # is a system object
-        results["system_name"]  = results["name"]
+        results["system_name"] = results["name"]
         results["profile_name"] = results["profile"]
-        if results.has_key("distro"):
-            results["distro_name"]  = results["distro"]
-        elif results.has_key("image"):
-            results["distro_name"]  = "N/A"
-            results["image_name"]   = results["image"]
-    elif results.has_key("distro"):
+        if "distro" in results:
+            results["distro_name"] = results["distro"]
+        elif "image" in results:
+            results["distro_name"] = "N/A"
+            results["image_name"] = results["image"]
+    elif "distro" in results:
         # is a profile or subprofile object
         results["profile_name"] = results["name"]
-        results["distro_name"]  = results["distro"]
-    elif results.has_key("kernel"):
+        results["distro_name"] = results["distro"]
+    elif "kernel" in results:
         # is a distro object
-        results["distro_name"]  = results["name"]
-    elif results.has_key("file"):
+        results["distro_name"] = results["name"]
+    elif "file" in results:
         # is an image object
-        results["distro_name"]  = "N/A"
-        results["image_name"]   = results["name"]
+        results["distro_name"] = "N/A"
+        results["image_name"] = results["name"]
 
     return results
 
+
 def flatten(data):
-    # convert certain nested hashes to strings.
+    # convert certain nested dicts to strings.
     # this is only really done for the ones koan needs as strings
     # this should not be done for everything
     if data is None:
         return None
-    if data.has_key("environment"):
-        data["environment"] = hash_to_string(data["environment"])
-    if data.has_key("kernel_options"):
-        data["kernel_options"] = hash_to_string(data["kernel_options"])
-    if data.has_key("kernel_options_post"):
-        data["kernel_options_post"] = hash_to_string(data["kernel_options_post"])
-    if data.has_key("yumopts"):
-        data["yumopts"]        = hash_to_string(data["yumopts"])
-    if data.has_key("ks_meta"):
-        data["ks_meta"] = hash_to_string(data["ks_meta"])
-    if data.has_key("template_files"):
-        data["template_files"] = hash_to_string(data["template_files"])
-    if data.has_key("boot_files"):
-        data["boot_files"] = hash_to_string(data["boot_files"])
-    if data.has_key("fetchable_files"):
-        data["fetchable_files"] = hash_to_string(data["fetchable_files"])
-    if data.has_key("repos") and isinstance(data["repos"], list):
-        data["repos"]   = " ".join(data["repos"])
-    if data.has_key("rpm_list") and isinstance(data["rpm_list"], list):
+    if "environment" in data:
+        data["environment"] = dict_to_string(data["environment"])
+    if "kernel_options" in data:
+        data["kernel_options"] = dict_to_string(data["kernel_options"])
+    if "kernel_options_post" in data:
+        data["kernel_options_post"] = dict_to_string(data["kernel_options_post"])
+    if "yumopts" in data:
+        data["yumopts"] = dict_to_string(data["yumopts"])
+    if "autoinstall_meta" in data:
+        data["autoinstall_meta"] = dict_to_string(data["autoinstall_meta"])
+    if "template_files" in data:
+        data["template_files"] = dict_to_string(data["template_files"])
+    if "boot_files" in data:
+        data["boot_files"] = dict_to_string(data["boot_files"])
+    if "fetchable_files" in data:
+        data["fetchable_files"] = dict_to_string(data["fetchable_files"])
+    if "repos" in data and isinstance(data["repos"], list):
+        data["repos"] = " ".join(data["repos"])
+    if "rpm_list" in data and isinstance(data["rpm_list"], list):
         data["rpm_list"] = " ".join(data["rpm_list"])
 
     # note -- we do not need to flatten "interfaces" as koan does not expect
     # it to be a string, nor do we use it on a kernel options line, etc...
- 
     return data
 
-def uniquify(seq, idfun=None): 
+
+def uniquify(seq):
     # credit: http://www.peterbe.com/plog/uniqifiers-benchmark
     # FIXME: if this is actually slower than some other way, overhaul it
-    if idfun is None:
-        def idfun(x): 
-           return x
     seen = {}
     result = []
     for item in seq:
-        marker = idfun(item)
-        if marker in seen:
+        if item in seen:
             continue
-        seen[marker] = 1
+        seen[item] = 1
         result.append(item)
     return result
 
-def __consolidate(node,results):
+
+def __consolidate(node, results):
     """
     Merge data from a given node with the aggregate of all
-    data from past scanned nodes.  Hashes and arrays are treated
+    data from past scanned nodes.  Dictionaries and arrays are treated
     specially.
     """
-    node_data =  node.to_datastruct()
+    node_data = node.to_dict()
 
     # if the node has any data items labelled <<inherit>> we need to expunge them.
     # so that they do not override the supernodes.
     node_data_copy = {}
     for key in node_data:
-       value = node_data[key]
-       if value != "<<inherit>>":
-          if isinstance(value, dict):
-              node_data_copy[key] = value.copy()
-          elif isinstance(value, list):
-              node_data_copy[key] = value[:]
-          else:
-              node_data_copy[key] = value
+        value = node_data[key]
+        if value != "<<inherit>>":
+            if isinstance(value, dict):
+                node_data_copy[key] = value.copy()
+            elif isinstance(value, list):
+                node_data_copy[key] = value[:]
+            else:
+                node_data_copy[key] = value
 
     for field in node_data_copy:
 
-       data_item = node_data_copy[field] 
-       if results.has_key(field):
- 
-          # now merge data types seperately depending on whether they are hash, list,
-          # or scalar.
+        data_item = node_data_copy[field]
+        if field in results:
+            # now merge data types seperately depending on whether they are dict, list,
+            # or scalar.
+            fielddata = results[field]
 
-          fielddata = results[field]
-
-          if isinstance(fielddata, dict):
-             # interweave hash results
-             results[field].update(data_item.copy())
-          elif isinstance(fielddata, list) or isinstance(fielddata, tuple):
-             # add to lists (cobbler doesn't have many lists)
-             # FIXME: should probably uniqueify list after doing this
-             results[field].extend(data_item)
-             results[field] = uniquify(results[field])
-          else:
-             # distro field gets special handling, since we don't
-             # want to overwrite it ever.
-             # FIXME: should the parent's field too? It will be over-
-             #        written if there are multiple sub-profiles in
-             #        the chain of inheritance
-             if field != "distro":
-                results[field] = data_item
-       else:
-          results[field] = data_item
+            if isinstance(fielddata, dict):
+                # interweave dict results
+                results[field].update(data_item.copy())
+            elif isinstance(fielddata, list) or isinstance(fielddata, tuple):
+                # add to lists (cobbler doesn't have many lists)
+                # FIXME: should probably uniqueify list after doing this
+                results[field].extend(data_item)
+                results[field] = uniquify(results[field])
+            else:
+                # distro field gets special handling, since we don't
+                # want to overwrite it ever.
+                # FIXME: should the parent's field too? It will be over-
+                #        written if there are multiple sub-profiles in
+                #        the chain of inheritance
+                if field != "distro":
+                    results[field] = data_item
+        else:
+            results[field] = data_item
 
     # now if we have any "!foo" results in the list, delete corresponding
     # key entry "foo", and also the entry "!foo", allowing for removal
     # of kernel options set in a distro later in a profile, etc.
 
-    hash_removals(results,"kernel_options")
-    hash_removals(results,"kernel_options_post")
-    hash_removals(results,"ks_meta")
-    hash_removals(results,"template_files")
-    hash_removals(results,"boot_files")
-    hash_removals(results,"fetchable_files")
+    dict_removals(results, "kernel_options")
+    dict_removals(results, "kernel_options_post")
+    dict_removals(results, "autoinstall_meta")
+    dict_removals(results, "template_files")
+    dict_removals(results, "boot_files")
+    dict_removals(results, "fetchable_files")
 
-def hash_removals(results,subkey):
-    if not results.has_key(subkey):
+
+def dict_removals(results, subkey):
+    if subkey not in results:
         return
     scan = results[subkey].keys()
     for k in scan:
         if str(k).startswith("!") and k != "!":
-           remove_me = k[1:]
-           if results[subkey].has_key(remove_me):
-               del results[subkey][remove_me]
-           del results[subkey][k]
+            remove_me = k[1:]
+            if remove_me in results[subkey]:
+                del results[subkey][remove_me]
+            del results[subkey][k]
 
-def hash_to_string(hash):
+
+def dict_to_string(_dict):
     """
-    Convert a hash to a printable string.
+    Convert a dictionary to a printable string.
     used primarily in the kernel options string
     and for some legacy stuff where koan expects strings
-    (though this last part should be changed to hashes)
+    (though this last part should be changed to dictionaries)
     """
     buffer = ""
-    if not isinstance(hash, dict):
-       return hash
-    for key in hash:
-       value = hash[key]
-       if not value:
-           buffer = buffer + str(key) + " "
-       elif isinstance(value, list):
-           # this value is an array, so we print out every
-           # key=value
-           for item in value:
-              buffer = buffer + str(key) + "=" + str(item) + " "
-       else:
-          buffer = buffer + str(key) + "=" + str(value) + " "
+    if not isinstance(_dict, dict):
+        return _dict
+    for key in _dict:
+        value = _dict[key]
+        if not value:
+            buffer += str(key) + " "
+        elif isinstance(value, list):
+            # this value is an array, so we print out every
+            # key=value
+            for item in value:
+                buffer += str(key) + "=" + str(item) + " "
+        else:
+            buffer += str(key) + "=" + str(value) + " "
     return buffer
+
 
 def rsync_files(src, dst, args, logger=None, quiet=True):
     """
@@ -878,7 +785,7 @@ def rsync_files(src, dst, args, logger=None, quiet=True):
     by args are appended to the command
     """
 
-    if args == None:
+    if args is None:
         args = ''
 
     RSYNC_CMD = "rsync -a %%s '%%s' %%s %s --exclude-from=/etc/cobbler/rsync.exclude" % args
@@ -899,7 +806,7 @@ def rsync_files(src, dst, args, logger=None, quiet=True):
     if not src.startswith("rsync://") and not src.startswith("/"):
         spacer = ' -e "ssh" '
 
-    rsync_cmd = RSYNC_CMD % (spacer,src,dst)
+    rsync_cmd = RSYNC_CMD % (spacer, src, dst)
     try:
         res = subprocess_call(logger, rsync_cmd)
         if res != 0:
@@ -909,17 +816,19 @@ def rsync_files(src, dst, args, logger=None, quiet=True):
 
     return True
 
+
 def run_this(cmd, args, logger):
     """
     A simple wrapper around subprocess calls.
     """
 
     my_cmd = cmd % args
-    rc = subprocess_call(logger,my_cmd,shell=True)
+    rc = subprocess_call(logger, my_cmd, shell=True)
     if rc != 0:
-        die(logger,"Command failed")
+        die(logger, "Command failed")
 
-def run_triggers(api,ref,globber,additional=[],logger=None):
+
+def run_triggers(api, ref, globber, additional=[], logger=None):
     """
     Runs all the trigger scripts in a given directory.
     ref can be a cobbler object, if not None, the name will be passed
@@ -940,7 +849,7 @@ def run_triggers(api,ref,globber,additional=[],logger=None):
         if ref:
             arglist.append(ref.name)
         for x in additional:
-       
+
             arglist.append(x)
         if logger is not None:
             logger.debug("running python trigger %s" % m.__name__)
@@ -948,7 +857,7 @@ def run_triggers(api,ref,globber,additional=[],logger=None):
         if rc != 0:
             raise CX("cobbler trigger failed: %s" % m.__name__)
 
-    # now do the old shell triggers, which are usually going to be slower, but are easier to write  
+    # now do the old shell triggers, which are usually going to be slower, but are easier to write
     # and support any language
 
     if logger is not None:
@@ -961,7 +870,7 @@ def run_triggers(api,ref,globber,additional=[],logger=None):
                 # skip dotfiles or .rpmnew files that may have been installed
                 # in the triggers directory
                 continue
-            arglist = [ file ]
+            arglist = [file]
             if ref:
                 arglist.append(ref.name)
             for x in additional:
@@ -969,167 +878,174 @@ def run_triggers(api,ref,globber,additional=[],logger=None):
                     arglist.append(x)
             if logger is not None:
                 logger.debug("running shell trigger %s" % file)
-            rc = subprocess_call(logger, arglist, shell=False) # close_fds=True)
+            rc = subprocess_call(logger, arglist, shell=False)  # close_fds=True)
         except:
             if logger is not None:
                 logger.warning("failed to execute trigger: %s" % file)
             continue
 
         if rc != 0:
-            raise CX(_("cobbler trigger failed: %(file)s returns %(code)d") % { "file" : file, "code" : rc })
+            raise CX(_("cobbler trigger failed: %(file)s returns %(code)d") % {"file": file, "code": rc})
 
-def fix_mod_python_select_submission(repos):
-    """ 
-    WARNING: this is a heinous hack to convert mod_python submitted form data
-    to something usable.  Ultimately we need to fix the root cause of this
-    which doesn't seem to happen on all versions of python/mp.
+        if logger is not None:
+            logger.debug("shell trigger %s finished successfully" % file)
+
+    if logger is not None:
+        logger.debug("shell triggers finished successfully")
+
+
+def get_family():
+    """
+    Get family of running operating system.
+
+    Family is the base Linux distribution of a Linux distribution, with a set of common
     """
 
-    # should be nice regex, but this is readable :)
-    repos = str(repos)
-    repos = repos.replace("'repos'","")
-    repos = repos.replace("'","")
-    repos = repos.replace("[","")
-    repos = repos.replace("]","")
-    repos = repos.replace("Field(","")
-    repos = repos.replace(")","")
-    repos = repos.replace(",","")
-    repos = repos.replace('"',"")
-    repos = repos.lstrip().rstrip()
-    return repos
+    redhat_list = ("red hat", "redhat", "scientific linux", "fedora", "centos")
+
+    dist = check_dist()
+    for item in redhat_list:
+        if item in dist:
+            return "redhat"
+    if dist in ("debian", "ubuntu"):
+        return "debian"
+    if "suse" in dist:
+        return "suse"
+    return dist
+
 
 def check_dist():
     """
-    Determines what distro we're running under.  
+    Determines what distro we're running under.
     """
     import platform
     try:
-      return platform.linux_distribution()[0].lower
+        return platform.linux_distribution()[0].lower().strip()
     except AttributeError:
-      return platform.dist().lower
+        return platform.dist()[0].lower().strip()
+
 
 def os_release():
 
-   if check_dist() == "redhat":
-      fh = open("/etc/redhat-release")
-      data = fh.read().lower()
-      if data.find("fedora") != -1:
-         make = "fedora"
-      elif data.find("centos") != -1:
-         make = "centos"
-      else:
-         make = "redhat"
-      release_index = data.find("release") 
-      rest = data[release_index+7:-1]
-      tokens = rest.split(" ")
-      for t in tokens:
-         try:
-             return (make,float(t))
-         except ValueError, ve:
-             pass
-      raise CX("failed to detect local OS version from /etc/redhat-release")
+    family = get_family()
+    if family == "redhat":
+        fh = open("/etc/redhat-release")
+        data = fh.read().lower()
+        if data.find("fedora") != -1:
+            make = "fedora"
+        elif data.find("centos") != -1:
+            make = "centos"
+        else:
+            make = "redhat"
+        release_index = data.find("release")
+        rest = data[release_index + 7:-1]
+        tokens = rest.split(" ")
+        for t in tokens:
+            try:
+                match = re.match('^\d+(?:\.\d+)?', t)
+                if match:
+                    return (make, float(match.group(0)))
+            except ValueError:
+                pass
+        raise CX("failed to detect local OS version from /etc/redhat-release")
 
-   elif check_dist() == "debian":
-      import lsb_release
-      release = lsb_release.get_distro_information()['RELEASE']
-      return ("debian", release)
-   elif check_dist() == "ubuntu":
-      version = sub_process.check_output(("lsb_release","--release","--short")).rstrip()
-      make = "ubuntu"
-      return (make, float(version))
-   elif check_dist() == "suse":
-      fd = open("/etc/SuSE-release")
-      for line in fd.read().split("\n"):
-         if line.find("VERSION") != -1:
-            version = line.replace("VERSION = ","")
-         if line.find("PATCHLEVEL") != -1:
-            rest = line.replace("PATCHLEVEL = ","")
-      make = "suse"
-      return (make, float(version))
-   else:
-      return ("unknown",0)
+    elif family == "debian":
+        distro = check_dist()
+        if distro == "debian":
+            import lsb_release
+            release = lsb_release.get_distro_information()['RELEASE']
+            return ("debian", release)
+        elif distro == "ubuntu":
+            version = subprocess_get(None, "lsb_release --release --short").rstrip()
+            make = "ubuntu"
+            return (make, float(version))
+
+    elif family == "suse":
+        fd = open("/etc/SuSE-release")
+        for line in fd.read().split("\n"):
+            if line.find("VERSION") != -1:
+                version = line.replace("VERSION = ", "")
+            if line.find("PATCHLEVEL") != -1:
+                rest = line.replace("PATCHLEVEL = ", "")
+        make = "suse"
+        return (make, float(version))
+    else:
+        return ("unknown", 0)
+
 
 def tftpboot_location():
     """
     Guesses the location of the tftpboot directory,
     based on the distro on which cobblerd is running
     """
-    (make,version) = os_release()
-    if make == "fedora" and version >= 9:
-        return "/var/lib/tftpboot"
-    elif make in ("redhat","centos") and version >= 6:
+    (make, version) = os_release()
+    str_version = str(version)
+
+    if make in ("fedora", "redhat", "centos"):
         return "/var/lib/tftpboot"
     elif make == "suse":
         return "/srv/tftpboot"
-    # As of Ubuntu 12.04, while they seem to have settled on sticking with 
-    # /var/lib/tftpboot, they haven't scrubbed all of the packages that came 
+    # As of Ubuntu 12.04, while they seem to have settled on sticking with
+    # /var/lib/tftpboot, they haven't scrubbed all of the packages that came
     # from Debian that use /srv/tftp by default.
     elif make == "ubuntu" and os.path.exists("/var/lib/tftpboot"):
         return "/var/lib/tftpboot"
     elif make == "ubuntu" and os.path.exists("/srv/tftp"):
         return "/srv/tftp"
-    elif make == "debian" and int(version.split('.')[0]) < 6:
+    elif make == "debian" and int(str_version.split('.')[0]) < 6:
         return "/var/lib/tftpboot"
-    elif make == "debian" and int(version.split('.')[0]) >= 6:
+    elif make == "debian" and int(str_version.split('.')[0]) >= 6:
         return "/srv/tftp"
     else:
         return "/tftpboot"
 
-def can_do_public_content(api):
-    """
-    Returns whether we can use public_content_t which greatly
-    simplifies SELinux usage.
-    """
-    (dist, ver) = api.get_os_details()
-    if dist == "redhat" and ver <= 4:
-       return False
-    return True
 
-def is_safe_to_hardlink(src,dst,api):
+def is_safe_to_hardlink(src, dst, api):
     (dev1, path1) = get_file_device_path(src)
     (dev2, path2) = get_file_device_path(dst)
     if dev1 != dev2:
-       return False
+        return False
     if dev1.find(":") != -1:
-       # is remoted
-       return False
+        # is remoted
+        return False
     # note: this is very cobbler implementation specific!
     if not api.is_selinux_enabled():
-       return True
+        return True
     if _re_initrd.match(os.path.basename(path1)):
-       return True
+        return True
     if _re_kernel.match(os.path.basename(path1)):
-       return True
+        return True
     # we're dealing with SELinux and files that are not safe to chcon
     return False
+
 
 def hashfile(fn, lcache=None, logger=None):
     """
     Returns the sha1sum of the file
     """
-
     db = {}
     try:
-        dbfile = os.path.join(lcache,'link_cache.json')
+        dbfile = os.path.join(lcache, 'link_cache.json')
         if os.path.exists(dbfile):
             db = simplejson.load(open(dbfile, 'r'))
     except:
         pass
 
     mtime = os.stat(fn).st_mtime
-    if db.has_key(fn):
+    if fn in db:
         if db[fn][0] >= mtime:
             return db[fn][1]
 
     if os.path.exists(fn):
-        cmd = '/usr/bin/sha1sum %s'%fn
-        key = subprocess_get(logger,cmd).split(' ')[0]
+        cmd = '/usr/bin/sha1sum %s' % fn
+        key = subprocess_get(logger, cmd).split(' ')[0]
         if lcache is not None:
-            db[fn] = (mtime,key)
-            simplejson.dump(db, open(dbfile,'w'))
+            db[fn] = (mtime, key)
+            simplejson.dump(db, open(dbfile, 'w'))
         return key
     else:
         return None
+
 
 def cachefile(src, dst, api=None, logger=None):
     """
@@ -1138,18 +1054,18 @@ def cachefile(src, dst, api=None, logger=None):
     copying data twice if the cache is not on the same device
     as the destination
     """
-    lcache = os.path.join(os.path.dirname(os.path.dirname(dst)),'.link_cache')
+    lcache = os.path.join(os.path.dirname(os.path.dirname(dst)), '.link_cache')
     if not os.path.isdir(lcache):
         os.mkdir(lcache)
     key = hashfile(src, lcache=lcache, logger=logger)
     cachefile = os.path.join(lcache, key)
     if not os.path.exists(cachefile):
-        logger.info("trying to create cache file %s"%cachefile)
-        copyfile(src,cachefile,api=api,logger=logger)
+        logger.info("trying to create cache file %s" % cachefile)
+        copyfile(src, cachefile, api=api, logger=logger)
 
-    logger.debug("trying cachelink %s -> %s -> %s"%(src,cachefile,dst))
-    rc = os.link(cachefile,dst)
-    return rc
+    logger.debug("trying cachelink %s -> %s -> %s" % (src, cachefile, dst))
+    os.link(cachefile, dst)
+
 
 def linkfile(src, dst, symlink_ok=False, cache=True, api=None, logger=None):
     """
@@ -1163,34 +1079,32 @@ def linkfile(src, dst, symlink_ok=False, cache=True, api=None, logger=None):
         # arg
         raise "Internal error: API handle is required"
 
-    is_remote = is_remote_file(src)
-
     if os.path.exists(dst):
         # if the destination exists, is it right in terms of accuracy
         # and context?
         if os.path.samefile(src, dst):
-            if not is_safe_to_hardlink(src,dst,api):
+            if not is_safe_to_hardlink(src, dst, api):
                 # may have to remove old hardlinks for SELinux reasons
                 # as previous implementations were not complete
                 if logger is not None:
-                   logger.info("removing: %s" % dst)
+                    logger.info("removing: %s" % dst)
                 os.remove(dst)
             else:
-                return True
+                return
         elif os.path.islink(dst):
             # existing path exists and is a symlink, update the symlink
             if logger is not None:
-               logger.info("removing: %s" % dst)
+                logger.info("removing: %s" % dst)
             os.remove(dst)
 
-    if is_safe_to_hardlink(src,dst,api):
+    if is_safe_to_hardlink(src, dst, api):
         # we can try a hardlink if the destination isn't to NFS or Samba
         # this will help save space and sync time.
         try:
             if logger is not None:
-                logger.info("trying hardlink %s -> %s" % (src,dst))
-            rc = os.link(src, dst)
-            return rc
+                logger.info("trying hardlink %s -> %s" % (src, dst))
+            os.link(src, dst)
+            return
         except (IOError, OSError):
             # hardlink across devices, or link already exists
             # we'll just symlink it if we can
@@ -1202,111 +1116,110 @@ def linkfile(src, dst, symlink_ok=False, cache=True, api=None, logger=None):
         # that is run chroot, so if we can symlink now, try it.
         try:
             if logger is not None:
-                logger.info("trying symlink %s -> %s" % (src,dst))
-            rc = os.symlink(src, dst)
-            return rc
+                logger.info("trying symlink %s -> %s" % (src, dst))
+            os.symlink(src, dst)
+            return
         except (IOError, OSError):
             pass
 
     if cache:
         try:
-            return cachefile(src,dst,api=api,logger=logger)
+            cachefile(src, dst, api=api, logger=logger)
+            return
         except (IOError, OSError):
             pass
 
     # we couldn't hardlink and we couldn't symlink so we must copy
+    copyfile(src, dst, api=api, logger=logger)
 
-    return copyfile(src, dst, api=api, logger=logger)
 
-def copyfile(src,dst,api=None,logger=None):
+def copyfile(src, dst, api=None, logger=None):
     try:
         if logger is not None:
-           logger.info("copying: %s -> %s" % (src,dst))
-        rc = shutil.copyfile(src,dst)
-        return rc
+            logger.info("copying: %s -> %s" % (src, dst))
+        if os.path.isdir(src):
+            shutil.copytree(src, dst)
+        else:
+            shutil.copyfile(src, dst)
     except:
-        if not os.access(src,os.R_OK):
+        if not os.access(src, os.R_OK):
             raise CX(_("Cannot read: %s") % src)
-        if not os.path.samefile(src,dst):
+        if os.path.samefile(src, dst):
             # accomodate for the possibility that we already copied
             # the file as a symlink/hardlink
             raise
             # traceback.print_exc()
             # raise CX(_("Error copying %(src)s to %(dst)s") % { "src" : src, "dst" : dst})
 
-def check_openfiles(src):
-    """
-    Used to check for open files on a mounted partition.
-    """
+
+def copyremotefile(src, dst1, api=None, logger=None):
     try:
-        if not os.path.isdir(src):
-            raise CX(_("Error in check_openfiles: the source (%s) must be a directory") % src)
-        cmd = [ "/usr/sbin/lsof", "+D", src, "-Fn", "|", "wc", "-l" ]
-        handle = sub_process.Popen(cmd, shell=True, stdout=sub_process.PIPE, close_fds=True)
-        out = handle.stdout
-        results = out.read()
-        return int(results)
-    except:
-        if not os.access(src,os.R_OK):
-            raise CX(_("Cannot read: %s") % src)
-        if not os.path.samefile(src,dst):
-            # accomodate for the possibility that we already copied
-            # the file as a symlink/hardlink
-            raise
+        if logger is not None:
+            logger.info("copying: %s -> %s" % (src, dst1))
+        srcfile = urllib2.urlopen(src)
+        output = open(dst1, 'wb')
+        output.write(srcfile.read())
+        output.close()
+    except Exception, e:
+        raise CX(_("Error while getting remote file (%s -> %s):\n%s" % (src, dst1, e.message)))
 
 
-def copyfile_pattern(pattern,dst,require_match=True,symlink_ok=False,cache=True,api=None,logger=None):
+def copyfile_pattern(pattern, dst, require_match=True, symlink_ok=False, cache=True, api=None, logger=None):
     files = glob.glob(pattern)
     if require_match and not len(files) > 0:
         raise CX(_("Could not find files matching %s") % pattern)
     for file in files:
-        base = os.path.basename(file)
-        dst1 = os.path.join(dst,os.path.basename(file))
-        linkfile(file,dst1,symlink_ok=symlink_ok,cache=cache,api=api,logger=logger)
+        dst1 = os.path.join(dst, os.path.basename(file))
+        linkfile(file, dst1, symlink_ok=symlink_ok, cache=cache, api=api, logger=logger)
 
-def rmfile(path,logger=None):
+
+def rmfile(path, logger=None):
     try:
         if logger is not None:
-           logger.info("removing: %s" % path)
+            logger.info("removing: %s" % path)
         os.unlink(path)
         return True
     except OSError, ioe:
-        if not ioe.errno == errno.ENOENT: # doesn't exist
+        if not ioe.errno == errno.ENOENT:   # doesn't exist
             if logger is not None:
                 log_exc(logger)
             raise CX(_("Error deleting %s") % path)
         return True
 
-def rmtree_contents(path,logger=None):
-   what_to_delete = glob.glob("%s/*" % path)
-   for x in what_to_delete:
-       rmtree(x,logger=logger)
 
-def rmtree(path,logger=None):
-   try:
-       if os.path.isfile(path):
-           return rmfile(path,logger=logger)
-       else:
-           if logger is not None:
-               logger.info("removing: %s" % path)
-           return shutil.rmtree(path,ignore_errors=True)
-   except OSError, ioe:
-       if logger is not None:
-           log_exc(logger)
-       if not ioe.errno == errno.ENOENT: # doesn't exist
-           raise CX(_("Error deleting %s") % path)
-       return True
+def rmtree_contents(path, logger=None):
+    what_to_delete = glob.glob("%s/*" % path)
+    for x in what_to_delete:
+        rmtree(x, logger=logger)
 
-def mkdir(path,mode=0755,logger=None):
-   try:
-       if logger is not None:
-          logger.info("mkdir: %s" % path)
-       return os.makedirs(path,mode)
-   except OSError, oe:
-       if not oe.errno == 17: # already exists (no constant for 17?)
-           if logger is not None:
-               log_exc(logger)
-           raise CX(_("Error creating %s") % path)
+
+def rmtree(path, logger=None):
+    try:
+        if os.path.isfile(path):
+            return rmfile(path, logger=logger)
+        else:
+            if logger is not None:
+                logger.info("removing: %s" % path)
+            return shutil.rmtree(path, ignore_errors=True)
+    except OSError, ioe:
+        if logger is not None:
+            log_exc(logger)
+        if not ioe.errno == errno.ENOENT:   # doesn't exist
+            raise CX(_("Error deleting %s") % path)
+        return True
+
+
+def mkdir(path, mode=0755, logger=None):
+    try:
+        if logger is not None:
+            logger.info("mkdir: %s" % path)
+        return os.makedirs(path, mode)
+    except OSError, oe:
+        if not oe.errno == 17:  # already exists (no constant for 17?)
+            if logger is not None:
+                log_exc(logger)
+            raise CX(_("Error creating %s") % path)
+
 
 def path_tail(apath, bpath):
     """
@@ -1321,100 +1234,93 @@ def path_tail(apath, bpath):
         result = "/" + result
     return result
 
-def set_redhat_management_key(self,key):
-   self.redhat_management_key = key
-   return True
 
-def set_redhat_management_server(self,server):
-   self.redhat_management_server = server
-   return True
+def set_arch(self, arch, repo=False):
+    if arch is None or arch == "" or arch == "standard" or arch == "x86":
+        arch = "i386"
 
-def set_arch(self,arch,repo=False):
-   if arch is None or arch == "" or arch == "standard" or arch == "x86":
-       arch = "i386"
+    if repo:
+        valids = ["i386", "x86_64", "ppc", "ppc64", "ppc64le", "ppc64el", "noarch", "src", "arm"]
+    else:
+        valids = ["i386", "x86_64", "ppc", "ppc64", "ppc64le", "ppc64el", "arm"]
 
-   if repo:
-       valids = [ "i386", "x86_64", "ia64", "ppc", "ppc64", "s390", "s390x", "noarch", "src", "arm" ]
-   else:
-       valids = [ "i386", "x86_64", "ia64", "ppc", "ppc64", "s390", "s390x", "arm" ]
+    if arch in valids:
+        self.arch = arch
+        return
 
-   if arch in valids:
-       self.arch = arch
-       return True
+    raise CX("arch choices include: %s" % ", ".join(valids))
 
-   raise CX("arch choices include: %s" % ", ".join(valids))
 
-def set_os_version(self,os_version):
-   if os_version == "" or os_version is None:
-      self.os_version = ""
-      return True
-   self.os_version = os_version.lower()
-   if self.breed is None or self.breed == "":
-      raise CX(_("cannot set --os-version without setting --breed first"))
-   if not self.breed in get_valid_breeds():
-      raise CX(_("fix --breed first before applying this setting"))
-   matched = SIGNATURE_CACHE["breeds"][self.breed]
-   if not os_version in matched:
-      nicer = ", ".join(matched)
-      raise CX(_("--os-version for breed %s must be one of %s, given was %s") % (self.breed, nicer, os_version))
-   self.os_version = os_version
-   return True
+def set_os_version(self, os_version):
+    if os_version == "" or os_version is None:
+        self.os_version = ""
+        return
+    self.os_version = os_version.lower()
+    if self.breed is None or self.breed == "":
+        raise CX(_("cannot set --os-version without setting --breed first"))
+    if self.breed not in get_valid_breeds():
+        raise CX(_("fix --breed first before applying this setting"))
+    matched = SIGNATURE_CACHE["breeds"][self.breed]
+    if os_version not in matched:
+        nicer = ", ".join(matched)
+        raise CX(_("--os-version for breed %s must be one of %s, given was %s") % (self.breed, nicer, os_version))
+    self.os_version = os_version
 
-def set_breed(self,breed):
-   valid_breeds = get_valid_breeds()
-   if breed is not None and breed.lower() in valid_breeds:
-       self.breed = breed.lower()
-       return True
-   nicer = ", ".join(valid_breeds)
-   raise CX(_("invalid value for --breed (%s), must be one of %s, different breeds have different levels of support") % (breed, nicer))
 
-def set_repo_os_version(self,os_version):
-   if os_version == "" or os_version is None:
-      self.os_version = ""
-      return True
-   self.os_version = os_version.lower()
-   if self.breed is None or self.breed == "":
-      raise CX(_("cannot set --os-version without setting --breed first"))
-   if not self.breed in codes.VALID_REPO_BREEDS:
-      raise CX(_("fix --breed first before applying this setting"))
-   self.os_version = os_version
-   return True
+def set_breed(self, breed):
+    valid_breeds = get_valid_breeds()
+    if breed is not None and breed.lower() in valid_breeds:
+        self.breed = breed.lower()
+        return
+    nicer = ", ".join(valid_breeds)
+    raise CX(_("invalid value for --breed (%s), must be one of %s, different breeds have different levels of support") % (breed, nicer))
 
-def set_repo_breed(self,breed):
-   valid_breeds = codes.VALID_REPO_BREEDS
-   if breed is not None and breed.lower() in valid_breeds:
-       self.breed = breed.lower()
-       return True
-   nicer = ", ".join(valid_breeds)
-   raise CX(_("invalid value for --breed (%s), must be one of %s, different breeds have different levels of support") % (breed, nicer))
 
-def set_repos(self,repos,bypass_check=False):
-   # WARNING: hack
-   # repos = fix_mod_python_select_submission(repos)
+def set_repo_os_version(self, os_version):
+    if os_version == "" or os_version is None:
+        self.os_version = ""
+        return
+    self.os_version = os_version.lower()
+    if self.breed is None or self.breed == "":
+        raise CX(_("cannot set --os-version without setting --breed first"))
+    if self.breed not in validate.REPO_BREEDS:
+        raise CX(_("fix --breed first before applying this setting"))
+    self.os_version = os_version
+    return
 
-   # allow the magic inherit string to persist
-   if repos == "<<inherit>>":
+
+def set_repo_breed(self, breed):
+    valid_breeds = validate.REPO_BREEDS
+    if breed is not None and breed.lower() in valid_breeds:
+        self.breed = breed.lower()
+        return
+    nicer = ", ".join(valid_breeds)
+    raise CX(_("invalid value for --breed (%s), must be one of %s, different breeds have different levels of support") % (breed, nicer))
+
+
+def set_repos(self, repos, bypass_check=False):
+    # allow the magic inherit string to persist
+    if repos == "<<inherit>>":
         self.repos = "<<inherit>>"
-        return True
+        return
 
-   # store as an array regardless of input type
-   if repos is None:
+    # store as an array regardless of input type
+    if repos is None:
         self.repos = []
-   else:
+    else:
         self.repos = input_string_or_list(repos)
-   if bypass_check:
-       return True
+    if bypass_check:
+        return
 
-   for r in self.repos:
-       if self.config.repos().find(name=r) is None:
-          raise CX(_("repo %s is not defined") % r)
+    for r in self.repos:
+        if self.collection_mgr.repos().find(name=r) is None:
+            raise CX(_("repo %s is not defined") % r)
 
-   return True
 
-def set_virt_file_size(self,num):
+def set_virt_file_size(self, num):
     """
     For Virt only.
-    Specifies the size of the virt image in gigabytes.  
+    Specifies the size of the virt image in gigabytes.
     Older versions of koan (x<0.6.3) interpret 0 as "don't care"
     Newer versions (x>=0.6.4) interpret 0 as "no disks"
     """
@@ -1423,20 +1329,20 @@ def set_virt_file_size(self,num):
 
     if num is None or num == "":
         self.virt_file_size = 0
-        return True
+        return
 
     if num == "<<inherit>>":
         self.virt_file_size = "<<inherit>>"
-        return True
+        return
 
-    if isinstance(num, str) and num.find(",") != -1:
+    if isinstance(num, basestring) and num.find(",") != -1:
         tokens = num.split(",")
         for t in tokens:
             # hack to run validation on each
             self.set_virt_file_size(t)
         # if no exceptions raised, good enough
         self.virt_file_size = num
-        return True
+        return
 
     try:
         inum = int(num)
@@ -1444,13 +1350,13 @@ def set_virt_file_size(self,num):
             raise CX(_("invalid virt file size (%s)" % num))
         if inum >= 0:
             self.virt_file_size = inum
-            return True
+            return
         raise CX(_("invalid virt file size (%s)" % num))
     except:
         raise CX(_("invalid virt file size (%s)" % num))
-    return True
 
-def set_virt_disk_driver(self,driver):
+
+def set_virt_disk_driver(self, driver):
     """
     For Virt only.
     Specifies the on-disk format for the virtualized disk
@@ -1462,9 +1368,9 @@ def set_virt_disk_driver(self,driver):
     #        and it's up to the user not to enter an
     #        unsupported disk format
     self.virt_disk_driver = driver
-    return True
 
-def set_virt_auto_boot(self,num):
+
+def set_virt_auto_boot(self, num):
     """
     For Virt only.
     Specifies whether the VM should automatically boot upon host reboot
@@ -1473,20 +1379,20 @@ def set_virt_auto_boot(self,num):
 
     if num == "<<inherit>>":
         self.virt_auto_boot = "<<inherit>>"
-        return True
+        return
 
     # num is a non-negative integer (0 means default)
     try:
         inum = int(num)
         if (inum == 0) or (inum == 1):
             self.virt_auto_boot = inum
-            return True
+            return
         raise CX(_("invalid virt_auto_boot value (%s): value must be either '0' (disabled) or '1' (enabled)" % inum))
     except:
         raise CX(_("invalid virt_auto_boot value (%s): value must be either '0' (disabled) or '1' (enabled)" % num))
-    return True
 
-def set_virt_pxe_boot(self,num):
+
+def set_virt_pxe_boot(self, num):
     """
     For Virt only.
     Specifies whether the VM should use PXE for booting
@@ -1498,13 +1404,13 @@ def set_virt_pxe_boot(self,num):
         inum = int(num)
         if (inum == 0) or (inum == 1):
             self.virt_pxe_boot = inum
-            return True
+            return
         raise CX(_("invalid virt_pxe_boot value (%s): value must be either '0' (disabled) or '1' (enabled)" % inum))
     except:
         raise CX(_("invalid virt_pxe_boot value (%s): value must be either '0' (disabled) or '1' (enabled)" % num))
-    return True
 
-def set_virt_ram(self,num):
+
+def set_virt_ram(self, num):
     """
     For Virt only.
     Specifies the size of the Virt RAM in MB.
@@ -1513,7 +1419,7 @@ def set_virt_ram(self,num):
 
     if num == "<<inherit>>":
         self.virt_ram = "<<inherit>>"
-        return True
+        return
 
     # num is a non-negative integer (0 means default)
     try:
@@ -1522,48 +1428,48 @@ def set_virt_ram(self,num):
             raise CX(_("invalid virt ram size (%s)" % num))
         if inum >= 0:
             self.virt_ram = inum
-            return True
+            return
         raise CX(_("invalid virt ram size (%s)" % num))
     except:
         raise CX(_("invalid virt ram size (%s)" % num))
-    return True
 
-def set_virt_type(self,vtype):
+
+def set_virt_type(self, vtype):
     """
     Virtualization preference, can be overridden by koan.
     """
 
     if vtype == "<<inherit>>":
-        self.virt_type == "<<inherit>>"
-        return True
+        self.virt_type = "<<inherit>>"
+        return
 
-    if vtype.lower() not in [ "qemu", "kvm", "xenpv", "xenfv", "vmware", "vmwarew", "openvz", "auto" ]:
+    if vtype.lower() not in ["qemu", "kvm", "xenpv", "xenfv", "vmware", "vmwarew", "openvz", "auto"]:
         raise CX(_("invalid virt type (%s)" % vtype))
     self.virt_type = vtype
-    return True
 
-def set_virt_bridge(self,vbridge):
+
+def set_virt_bridge(self, vbridge):
     """
     The default bridge for all virtual interfaces under this profile.
     """
     if vbridge is None or vbridge == "":
-       vbridge = self.settings.default_virt_bridge
+        vbridge = self.settings.default_virt_bridge
     self.virt_bridge = vbridge
-    return True
 
-def set_virt_path(self,path,for_system=False):
+
+def set_virt_path(self, path, for_system=False):
     """
     Virtual storage location suggestion, can be overriden by koan.
     """
     if path is None:
-       path = ""
+        path = ""
     if for_system:
-       if path == "":
-          path = "<<inherit>>"
+        if path == "":
+            path = "<<inherit>>"
     self.virt_path = path
-    return True
 
-def set_virt_cpus(self,num):
+
+def set_virt_cpus(self, num):
     """
     For Virt only.  Set the number of virtual CPUs to give to the
     virtual machine.  This is fed to virtinst RAW, so cobbler
@@ -1572,11 +1478,11 @@ def set_virt_cpus(self,num):
     """
     if num == "" or num is None:
         self.virt_cpus = 1
-        return True
+        return
 
     if num == "<<inherit>>":
         self.virt_cpus = "<<inherit>>"
-        return True
+        return
 
     try:
         num = int(str(num))
@@ -1584,73 +1490,53 @@ def set_virt_cpus(self,num):
         raise CX(_("invalid number of virtual CPUs (%s)" % num))
 
     self.virt_cpus = num
-    return True
 
-def get_kickstart_templates(api):
-    files = {}
-    for x in api.profiles():
-        if x.kickstart is not None and x.kickstart != "" and x.kickstart != "<<inherit>>":
-            if os.path.exists(x.kickstart):
-                files[x.kickstart] = 1
-    for x in api.systems():
-        if x.kickstart is not None and x.kickstart != "" and x.kickstart != "<<inherit>>":
-            if os.path.exists(x.kickstart):
-                files[x.kickstart] = 1
-    for x in glob.glob("/var/lib/cobbler/kickstarts/*"):
-        if os.path.isfile(x):
-            files[x] = 1
-    for x in glob.glob("/etc/cobbler/*.ks"):
-        if os.path.isfile(x):
-            files[x] = 1
-
-    results = files.keys()
-    results.sort()
-    return results
 
 def safe_filter(var):
     if var is None:
-       return
+        return
     if var.find("..") != -1 or var.find(";") != -1:
-       raise CX("Invalid characters found in input")
+        raise CX("Invalid characters found in input")
+
 
 def is_selinux_enabled():
     if not os.path.exists("/usr/sbin/selinuxenabled"):
-       return False
-    args = "/usr/sbin/selinuxenabled"
-    selinuxenabled = sub_process.call(args,close_fds=True)
+        return False
+    cmd = "/usr/sbin/selinuxenabled"
+    selinuxenabled = subprocess_call(None, cmd)
     if selinuxenabled == 0:
         return True
     else:
         return False
 
-import os
-import sys
-import random
-
-# We cache the contents of /etc/mtab ... the following variables are used 
+# We cache the contents of /etc/mtab ... the following variables are used
 # to keep our cache in sync
 mtab_mtime = None
 mtab_map = []
 
-class MntEntObj(object):
-    mnt_fsname = None #* name of mounted file system */
-    mnt_dir = None    #* file system path prefix */
-    mnt_type = None   #* mount type (see mntent.h) */
-    mnt_opts = None   #* mount options (see mntent.h) */
-    mnt_freq = 0      #* dump frequency in days */
-    mnt_passno = 0    #* pass number on parallel fsck */
 
-    def __init__(self,input=None):
-        if input and isinstance(input, str):
-            (self.mnt_fsname, self.mnt_dir, self.mnt_type, self.mnt_opts, \
+class MntEntObj(object):
+    mnt_fsname = None   # name of mounted file system
+    mnt_dir = None      # file system path prefix
+    mnt_type = None     # mount type (see mntent.h)
+    mnt_opts = None     # mount options (see mntent.h)
+    mnt_freq = 0        # dump frequency in days
+    mnt_passno = 0      # pass number on parallel fsck
+
+    def __init__(self, input=None):
+        if input and isinstance(input, basestring):
+            (self.mnt_fsname, self.mnt_dir, self.mnt_type, self.mnt_opts,
              self.mnt_freq, self.mnt_passno) = input.split()
+
     def __dict__(self):
-        return {"mnt_fsname": self.mnt_fsname, "mnt_dir": self.mnt_dir, \
-                "mnt_type": self.mnt_type, "mnt_opts": self.mnt_opts, \
+        return {"mnt_fsname": self.mnt_fsname, "mnt_dir": self.mnt_dir,
+                "mnt_type": self.mnt_type, "mnt_opts": self.mnt_opts,
                 "mnt_freq": self.mnt_freq, "mnt_passno": self.mnt_passno}
+
     def __str__(self):
-        return "%s %s %s %s %s %s" % (self.mnt_fsname, self.mnt_dir, self.mnt_type, \
+        return "%s %s %s %s %s %s" % (self.mnt_fsname, self.mnt_dir, self.mnt_type,
                                       self.mnt_opts, self.mnt_freq, self.mnt_passno)
+
 
 def get_mtab(mtab="/etc/mtab", vfstype=None):
     global mtab_mtime, mtab_map
@@ -1671,6 +1557,7 @@ def get_mtab(mtab="/etc/mtab", vfstype=None):
 
     return mtab_map
 
+
 def __cache_mtab__(mtab="/etc/mtab"):
     global mtab_mtime
 
@@ -1679,6 +1566,7 @@ def __cache_mtab__(mtab="/etc/mtab"):
     f.close()
 
     return mtab
+
 
 def get_file_device_path(fname):
     '''What this function attempts to do is take a file and return:
@@ -1695,28 +1583,46 @@ def get_file_device_path(fname):
 
     # convert mtab to a dict
     mtab_dict = {}
-    for ent in get_mtab():
-        mtab_dict[ent.mnt_dir] = ent.mnt_fsname
+    try:
+        for ent in get_mtab():
+            mtab_dict[ent.mnt_dir] = ent.mnt_fsname
+    except:
+        pass
 
     # find a best match
     fdir = os.path.dirname(fname)
-    match = mtab_dict.has_key(fdir)
+    if fdir in mtab_dict:
+        match = True
+    else:
+        match = False
+    chrootfs = False
     while not match:
+        if fdir == os.path.sep:
+            chrootfs = True
+            break
         fdir = os.path.realpath(os.path.join(fdir, os.path.pardir))
-        match = mtab_dict.has_key(fdir)
+        if fdir in mtab_dict:
+            match = True
+        else:
+            match = False
 
     # construct file path relative to device
     if fdir != os.path.sep:
         fname = fname[len(fdir):]
 
-    return (mtab_dict[fdir], fname)
+    if chrootfs:
+        return (":", fname)
+    else:
+        return (mtab_dict[fdir], fname)
+
 
 def is_remote_file(file):
     (dev, path) = get_file_device_path(file)
     if dev.find(":") != -1:
-       return True
+        return True
     else:
-       return False
+        return False
+
 
 def subprocess_sp(logger, cmd, shell=True, input=None):
     if logger is not None:
@@ -1724,358 +1630,217 @@ def subprocess_sp(logger, cmd, shell=True, input=None):
 
     stdin = None
     if input:
-        stdin = sub_process.PIPE
+        stdin = subprocess.PIPE
 
     try:
-        sp = sub_process.Popen(cmd, shell=shell, stdin=stdin, stdout=sub_process.PIPE, stderr=sub_process.PIPE, close_fds=True)
+        sp = subprocess.Popen(cmd, shell=shell, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True)
     except OSError:
         if logger is not None:
             log_exc(logger)
         die(logger, "OS Error, command not found?  While running: %s" % cmd)
 
-    (out,err) = sp.communicate(input)
+    (out, err) = sp.communicate(input)
     rc = sp.returncode
     if logger is not None:
         logger.info("received on stdout: %s" % out)
         logger.debug("received on stderr: %s" % err)
     return out, rc
 
+
 def subprocess_call(logger, cmd, shell=True, input=None):
     data, rc = subprocess_sp(logger, cmd, shell=shell, input=input)
     return rc
+
 
 def subprocess_get(logger, cmd, shell=True, input=None):
     data, rc = subprocess_sp(logger, cmd, shell=shell, input=input)
     return data
 
-def popen2(args, **kwargs):
-    """ 
-    Leftovers from borrowing some bits from Snake, replace this 
-    function with just the subprocess call.
-    """
-    p = sub_process.Popen(args, stdout=sub_process.PIPE, stdin=sub_process.PIPE, **kwargs)
-    return (p.stdout, p.stdin)
 
-def ram_consumption_of_guests(host, api):
-    guest_names = host.virt_guests
-    ttl_ram = 0
-    if len(guest_names) == 0:
-       # a system with no virt hosts already is our best
-       # candidate
-       return 0
-
-    for g in guest_names:
-       host_obj = api.find_system(g)
-       if host_obj is None:
-          # guest object was deleted but host was not updated
-          continue
-       host_data = blender(api,False,host_obj)
-       ram = host_data.get("virt_ram", 512)
-       ttl_ram = ttl_ram + host_data["virt_ram"]
-    return ttl_ram
+def get_supported_system_boot_loaders():
+    return ["<<inherit>>", "elilo", "grub", "grub2", "pxelinux", "yaboot"]
 
 
+def get_supported_distro_boot_loaders(distro, api_handle=None):
+    try:
+        # Try to read from the signature
+        return api_handle.get_signatures()["breeds"][distro.breed][distro.os_version]["boot_loaders"][distro.arch]
+    except:
+        try:
+            # Try to read directly from the cache
+            return SIGNATURE_CACHE["breeds"][distro.breed][distro.os_version]["boot_loaders"][distro.arch]
+        except:
+            try:
+                # Else use some well-known defaults
+                return {"ppc64": ["grub2", "pxelinux", "yaboot"],
+                        "ppc64le": ["grub2"],
+                        "ppc64el": ["grub2"],
+                        "i386": ["grub", "pxelinux"],
+                        "x86_64": ["grub", "pxelinux"]}[distro.arch]
+            except:
+                # Else return the globally known list
+                return get_supported_system_boot_loaders()
 
-def choose_virt_host(systems, api):
-    """
-    From a list of systems, choose a system that can best host a virtual
-    machine.  This initial engine is not as optimal as it could be, but
-    works by determining the system with the least amount of VM RAM deployed
-    as defined by the amount of virtual ram on each guest for each guest
-    that the hosts hosts.  Hop on pop.  
 
-    This does assume hosts are reasonably homogenous.  In the future
-    this heuristic should be pluggable and be able to tap into other
-    external data sources and maybe basic usage stats.
-    """
-     
-    if len(systems) == 0:
-       raise CX("empty candidate systems list")
-    by_name = {}
-    least_host = systems[0] 
-    least_host_ct = -1
-    for s in systems:
-       ct = ram_consumption_of_guests(s, api)
-       if (ct < least_host_ct) or (least_host_ct == -1):
-          least_host = s
-          least_host_ct = ct
-    return least_host.name
-
-def os_system(cmd):
-    """
-    os.system doesn't close file descriptors, so this is a wrapper
-    to ensure we never use it.
-    """
-    rc = sub_process.call(cmd, shell=True, close_fds=True)
-    return rc
-
-def clear_from_fields(obj, fields, is_subobject=False):
+def clear_from_fields(item, fields, is_subobject=False):
     """
     Used by various item_*.py classes for automating datastructure boilerplate.
     """
     for elems in fields:
         # if elems startswith * it's an interface field and we do not operate on it.
-        if elems[0].startswith("*") or elems[0].find("widget") != -1:
-           continue
+        if elems[0].startswith("*"):
+            continue
         if is_subobject:
-           val = elems[2]
+            val = elems[2]
         else:
-           val = elems[1]
-        if isinstance(val,basestring):
-           if val.startswith("SETTINGS:"):
-               setkey = val.split(":")[-1]
-               val = getattr(obj.settings, setkey)
-        setattr(obj, elems[0], val)
+            val = elems[1]
+        if isinstance(val, basestring):
+            if val.startswith("SETTINGS:"):
+                setkey = val.split(":")[-1]
+                val = getattr(item.settings, setkey)
+        setattr(item, elems[0], val)
 
-    if obj.COLLECTION_TYPE == "system":
-        obj.interfaces = {}
+    if item.COLLECTION_TYPE == "system":
+        item.interfaces = {}
 
-def from_datastruct_from_fields(obj, seed_data, fields):
 
+def from_dict_from_fields(item, item_dict, fields):
     int_fields = []
     for elems in fields:
         # we don't have to load interface fields here
-        if elems[0].startswith("*") or elems[0].find("widget") != -1:
+        if elems[0].startswith("*"):
             if elems[0].startswith("*"):
                 int_fields.append(elems)
             continue
         src_k = dst_k = elems[0]
         # deprecated field switcheroo
-        if field_info.DEPRECATED_FIELDS.has_key(src_k):
+        if src_k in field_info.DEPRECATED_FIELDS:
             dst_k = field_info.DEPRECATED_FIELDS[src_k]
-        if seed_data.has_key(src_k):
-            setattr(obj, dst_k, seed_data[src_k])
+        if src_k in item_dict:
+            setattr(item, dst_k, item_dict[src_k])
 
-    if obj.uid == '':
-        obj.uid = obj.config.generate_uid()
+    if item.uid == '':
+        item.uid = item.config.generate_uid()
 
     # special handling for interfaces
-    if obj.COLLECTION_TYPE == "system":
-        obj.interfaces = copy.deepcopy(seed_data["interfaces"])
+    if item.COLLECTION_TYPE == "system":
+        item.interfaces = copy.deepcopy(item_dict["interfaces"])
         # deprecated field switcheroo for interfaces
-        for interface in obj.interfaces.keys():
-            for k in obj.interfaces[interface].keys():
-                if field_info.DEPRECATED_FIELDS.has_key(k):
-                    if not obj.interfaces[interface].has_key(field_info.DEPRECATED_FIELDS[k]) or \
-                           obj.interfaces[interface][field_info.DEPRECATED_FIELDS[k]] == "":
-                        obj.interfaces[interface][field_info.DEPRECATED_FIELDS[k]] = obj.interfaces[interface][k]
+        for interface in item.interfaces.keys():
+            for k in item.interfaces[interface].keys():
+                if k in field_info.DEPRECATED_FIELDS:
+                    if not field_info.DEPRECATED_FIELDS[k] in item.interfaces[interface] or \
+                            item.interfaces[interface][field_info.DEPRECATED_FIELDS[k]] == "":
+                        item.interfaces[interface][field_info.DEPRECATED_FIELDS[k]] = item.interfaces[interface][k]
             # populate fields that might be missing
             for int_field in int_fields:
-                if not obj.interfaces[interface].has_key(int_field[0][1:]):
-                    obj.interfaces[interface][int_field[0][1:]] = int_field[1]
-    return obj
+                if not int_field[0][1:] in item.interfaces[interface]:
+                    item.interfaces[interface][int_field[0][1:]] = int_field[1]
 
-def get_methods_from_fields(obj, fields):
-    ds = {}
+
+def to_dict_from_fields(item, fields):
+    _dict = {}
     for elem in fields:
         k = elem[0]
-        # modify interfaces is handled differently, and need not work this way
-        if k.startswith("*") or k.find("widget") != -1:
+        if k.startswith("*"):
             continue
-        setfn = getattr(obj, "set_%s" % k)
-        ds[k] = setfn
-    return ds
-
-def to_datastruct_from_fields(obj, fields):
-    ds = {}
-    for elem in fields:
-        k = elem[0]
-        if k.startswith("*") or k.find("widget") != -1:
-            continue
-        data = getattr(obj, k)
-        ds[k] = data
+        data = getattr(item, k)
+        _dict[k] = data
     # interfaces on systems require somewhat special handling
     # they are the only exception in Cobbler.
-    if obj.COLLECTION_TYPE == "system":
-        ds["interfaces"] = copy.deepcopy(obj.interfaces)
-        #for interface in ds["interfaces"].keys():
-        #    for k in ds["interfaces"][interface].keys():
+    if item.COLLECTION_TYPE == "system":
+        _dict["interfaces"] = copy.deepcopy(item.interfaces)
+        # for interface in _dict["interfaces"].keys():
+        #    for k in _dict["interfaces"][interface].keys():
         #        if field_info.DEPRECATED_FIELDS.has_key(k):
-        #            ds["interfaces"][interface][field_info.DEPRECATED_FIELDS[k]] = ds["interfaces"][interface][k]
+        #            _dict["interfaces"][interface][field_info.DEPRECATED_FIELDS[k]] = _dict["interfaces"][interface][k]
 
-    return ds
+    return _dict
 
-def printable_from_fields(obj, fields):
+
+def to_string_from_fields(item_dict, fields):
     """
-    Obj is a hash datastructure, fields is something like item_distro.FIELDS
+    item_dict is a dictionary, fields is something like item_distro.FIELDS
     """
-    buf  = ""
+    buf = ""
     keys = []
     for elem in fields:
-       keys.append((elem[0], elem[3], elem[4]))
+        keys.append((elem[0], elem[3], elem[4]))
     keys.sort()
-    buf = buf + "%-30s : %s\n" % ("Name", obj["name"])
+    buf += "%-30s : %s\n" % ("Name", item_dict["name"])
     for (k, nicename, editable) in keys:
-       # FIXME: supress fields users don't need to see?
-       # FIXME: interfaces should be sorted
-       # FIXME: print ctime, mtime nicely
-       if k.startswith("*") or not editable or k.find("widget") != -1:
-           continue
+        # FIXME: supress fields users don't need to see?
+        # FIXME: interfaces should be sorted
+        # FIXME: print ctime, mtime nicely
+        if k.startswith("*") or not editable:
+            continue
 
-       if k != "name":
-           # FIXME: move examples one field over, use description here.
-           buf = buf + "%-30s : %s\n" % (nicename, obj[k])
+        if k != "name":
+            # FIXME: move examples one field over, use description here.
+            buf += "%-30s : %s\n" % (nicename, item_dict[k])
 
-    # somewhat brain-melting special handling to print the hashes
+    # somewhat brain-melting special handling to print the dicts
     # inside of the interfaces more neatly.
-    if obj.has_key("interfaces"):
-       for iname in obj["interfaces"].keys():
-          # FIXME: inames possibly not sorted
-          buf = buf + "%-30s : %s\n" % ("Interface ===== ",iname)
-          for (k, nicename, editable) in keys:
-             nkey = k.replace("*","")
-             if k.startswith("*") and editable:
-                 buf = buf + "%-30s : %s\n" % (nicename, obj["interfaces"][iname].get(nkey,""))
+    if "interfaces" in item_dict:
+        for iname in item_dict["interfaces"].keys():
+            # FIXME: inames possibly not sorted
+            buf += "%-30s : %s\n" % ("Interface ===== ", iname)
+            for (k, nicename, editable) in keys:
+                nkey = k.replace("*", "")
+                if k.startswith("*") and editable:
+                    buf += "%-30s : %s\n" % (nicename, item_dict["interfaces"][iname].get(nkey, ""))
 
     return buf
 
-def matches_args(args, list_of):
-    """
-    Used to simplify some code around which arguments to add when.
-    """
-    for x in args:
-        if x in list_of:
-            return True
-    return False
 
-def add_options_from_fields(object_type, parser, fields, object_action):
-    if object_action in ["add","edit","find","copy","rename"]:
-        for elem in fields:
-            k = elem[0] 
-            if k.find("widget") != -1:
-                continue
-            # scrub interface tags so all fields get added correctly.
-            k = k.replace("*","")
-            default = elem[1]
-            nicename = elem[3]
-            tooltip = elem[5]
-            choices = elem[6]
-            if field_info.ALTERNATE_OPTIONS.has_key(k):
-                niceopt = field_info.ALTERNATE_OPTIONS[k]
-            else:
-                niceopt = "--%s" % k.replace("_","-")
-            desc = nicename
-            if tooltip != "":
-                desc = nicename + " (%s)" % tooltip
-
-            aliasopt = []
-            for deprecated_field in field_info.DEPRECATED_FIELDS.keys():
-                if field_info.DEPRECATED_FIELDS[deprecated_field] == k:
-                    aliasopt.append("--%s" % deprecated_field)
-
-            if isinstance(choices, list) and len(choices) != 0:
-                desc = desc + " (valid options: %s)" % ",".join(choices)    
-                parser.add_option(niceopt, dest=k, help=desc, choices=choices)
-                for alias in aliasopt:
-                    parser.add_option(alias, dest=k, help=desc, choices=choices)
-            else:
-                parser.add_option(niceopt, dest=k, help=desc)
-                for alias in aliasopt:
-                    parser.add_option(alias, dest=k, help=desc)
-
-        if object_type == "system":
-            # system object
-            parser.add_option("--interface", dest="interface", help="the interface to operate on (can only be specified once per command line)")
-            if object_action in ["add","edit"]:
-                parser.add_option("--delete-interface", dest="delete_interface", action="store_true")
-                parser.add_option("--rename-interface", dest="rename_interface")
-
-        if object_action in ["copy","rename"]:
-            parser.add_option("--newname", help="new object name")
-
-        if object_action not in ["find",] and object_type != "setting": 
-            parser.add_option("--clobber", dest="clobber", help="allow add to overwrite existing objects", action="store_true")
-            parser.add_option("--in-place", action="store_true", default=False, dest="in_place", help="edit items in kopts or ksmeta without clearing the other items")
-
-    elif object_action == "remove":
-        parser.add_option("--name", help="%s name to remove" % object_type)
-        parser.add_option("--recursive", action="store_true", dest="recursive", help="also delete child objects")
-
-    # FIXME: not supported in 2.0 ?
-    #if not object_action in ["dumpvars","find","remove","report","list"]: 
-    #    parser.add_option("--no-sync",     action="store_true", dest="nosync", help="suppress sync for speed")
-    # FIXME: not supported in 2.0 ?
-    # if not matches_args(args,["dumpvars","report","list"]):
-    #    parser.add_option("--no-triggers", action="store_true", dest="notriggers", help="suppress trigger execution")
-
-def get_remote_methods_from_fields(obj,fields):
+def get_setter_methods_from_fields(item, fields):
     """
     Return the name of set functions for all fields, keyed by the field name.
     """
-    ds = {}
+    setters = {}
     for elem in fields:
-       name = elem[0].replace("*","")
-       if name.find("widget") == -1:
-          ds[name] = getattr(obj,"set_%s" % name)
-    if obj.COLLECTION_TYPE == "system":
-       ds["modify_interface"] = getattr(obj,"modify_interface")
-       ds["delete_interface"] = getattr(obj,"delete_interface")
-       ds["rename_interface"] = getattr(obj,"rename_interface")
-    return ds
+        name = elem[0].replace("*", "")
+        setters[name] = getattr(item, "set_%s" % name)
+    if item.COLLECTION_TYPE == "system":
+        setters["modify_interface"] = getattr(item, "modify_interface")
+        setters["delete_interface"] = getattr(item, "delete_interface")
+        setters["rename_interface"] = getattr(item, "rename_interface")
+    return setters
 
-def get_power_types():
-    """
-    Return all possible power types
-    """
-    power_types = []
-    power_template = re.compile(r'fence_(.*)')
-    fence_files = glob.glob("/usr/sbin/fence_*") + glob.glob("/sbin/fence_*")
-    for x in fence_files:
-        power_types.append(power_template.search(x).group(1))
-    power_types.sort()
-    return power_types
 
-def get_power(powertype=None):
-    """
-    Return power command for type
-    """
-    if powertype:
-        # try /sbin, then /usr/sbin
-        powerpath1 = "/sbin/fence_%s" % powertype
-        powerpath2 = "/usr/sbin/fence_%s" % powertype
-        for powerpath in (powerpath1,powerpath2):
-            if os.path.isfile(powerpath) and os.access(powerpath, os.X_OK):
-                return powerpath
-    return None
-
-def get_power_template(powertype=None):
-    """
-    Return power template for type
-    """
-    if powertype:
-        powertemplate = "/etc/cobbler/power/fence_%s.template" % powertype
-        if os.path.isfile(powertemplate):
-            f = open(powertemplate)
-            template = f.read()
-            f.close()
-            return template
-    # return a generic template if a specific one wasn't found
-    return "action=$power_mode\nlogin=$power_user\npasswd=$power_pass\nipaddr=$power_address\nport=$power_id"
-
-def load_signatures(filename,cache=True):
+def load_signatures(filename, cache=True):
     """
     Loads the import signatures for distros
     """
     global SIGNATURE_CACHE
-    try:
-        f = open(filename,"r")
-        sigjson = f.read()
-        f.close()
-        sigdata = simplejson.loads(sigjson)
-        if cache:
-            SIGNATURE_CACHE = sigdata
-        return True
-    except:
-        return False
+
+    f = open(filename, "r")
+    sigjson = f.read()
+    f.close()
+    sigdata = simplejson.loads(sigjson)
+    if cache:
+        SIGNATURE_CACHE = sigdata
+
 
 def get_valid_breeds():
     """
     Return a list of valid breeds found in the import signatures
     """
-    if SIGNATURE_CACHE.has_key("breeds"):
+    if "breeds" in SIGNATURE_CACHE:
         return SIGNATURE_CACHE["breeds"].keys()
     else:
         return []
+
+
+def get_valid_os_versions_for_breed(breed):
+    """
+    Return a list of valid os-versions for the given breed
+    """
+    os_versions = []
+    if breed in get_valid_breeds():
+        os_versions = SIGNATURE_CACHE["breeds"][breed].keys()
+    return os_versions
+
 
 def get_valid_os_versions():
     """
@@ -2089,6 +1854,21 @@ def get_valid_os_versions():
         pass
     return uniquify(os_versions)
 
+
+def get_valid_archs():
+    """
+    Return a list of valid architectures found in the import signatures
+    """
+    archs = []
+    try:
+        for breed in get_valid_breeds():
+            for operating_system in SIGNATURE_CACHE["breeds"][breed].keys():
+                archs += SIGNATURE_CACHE["breeds"][breed][operating_system]["supported_arches"]
+    except:
+        pass
+    return uniquify(archs)
+
+
 def get_shared_secret():
     """
     The 'web.ss' file is regenerated each time cobblerd restarts and is
@@ -2099,11 +1879,12 @@ def get_shared_secret():
     """
 
     try:
-       fd = open("/var/lib/cobbler/web.ss")
-       data = fd.read()
+        fd = open("/var/lib/cobbler/web.ss")
+        data = fd.read()
     except:
-       return -1
+        return -1
     return str(data).strip()
+
 
 def local_get_cobbler_api_url():
     # Load server and http port
@@ -2112,29 +1893,20 @@ def local_get_cobbler_api_url():
         data = yaml.safe_load(fh.read())
         fh.close()
     except:
-       traceback.print_exc()
-       raise CX("/etc/cobbler/settings is not a valid YAML file")
+        traceback.print_exc()
+        raise CX("/etc/cobbler/settings is not a valid YAML file")
 
-    ip = data.get("server","127.0.0.1")
+    ip = data.get("server", "127.0.0.1")
     if data.get("client_use_localhost", False):
-        # this overrides the server setting 
+        # this overrides the server setting
         ip = "127.0.0.1"
-    port = data.get("http_port","80")
+    port = data.get("http_port", "80")
     protocol = "http"
     if data.get("client_use_https", False):
         protocol = "https"
 
-    return "%s://%s:%s/cobbler_api" % (protocol,ip,port)
+    return "%s://%s:%s/cobbler_api" % (protocol, ip, port)
 
-def get_ldap_template(ldaptype=None):
-    """
-    Return ldap command for type
-    """
-    if ldaptype:
-        ldappath = "/etc/cobbler/ldap/ldap_%s.template" % ldaptype
-        if os.path.isfile(ldappath):
-            return ldappath
-    return None
 
 def local_get_cobbler_xmlrpc_url():
     # Load xmlrpc port
@@ -2143,9 +1915,10 @@ def local_get_cobbler_xmlrpc_url():
         data = yaml.safe_load(fh.read())
         fh.close()
     except:
-       traceback.print_exc()
-       raise CX("/etc/cobbler/settings is not a valid YAML file")
-    return "http://%s:%s" % ("127.0.0.1",data.get("xmlrpc_port","25151"))
+        traceback.print_exc()
+        raise CX("/etc/cobbler/settings is not a valid YAML file")
+    return "http://%s:%s" % ("127.0.0.1", data.get("xmlrpc_port", "25151"))
+
 
 def strip_none(data, omit_none=False):
     """
@@ -2167,7 +1940,6 @@ def strip_none(data, omit_none=False):
     elif isinstance(data, dict):
         data2 = {}
         for key in data.keys():
-            keydata = data[key]
             if omit_none and data[key] is None:
                 pass
             else:
@@ -2176,45 +1948,40 @@ def strip_none(data, omit_none=False):
 
     return data
 
-def cli_find_via_xmlrpc(remote, otype, options):
-    """
-    Given an options object and a remote handle, find options matching
-    the criteria given.
-    """
-    criteria = strip_none2(options.__dict__)
-    return remote.find_items(otype,criteria,"name",False)
-
 # -------------------------------------------------------
-    
-def loh_to_hoh(datastruct, indexkey):
+
+
+def lod_to_dod(_list, indexkey):
     """
-    things like get_distros() returns a list of a hashes
-    convert this to a hash of hashes keyed off of an arbitrary field
+    things like get_distros() returns a list of a dictionaries
+    convert this to a dict of dicts keyed off of an arbitrary field
 
     EX:  [  { "a" : 2 }, { "a : 3 } ]  ->  { "2" : { "a" : 2 }, "3" : { "a" : "3" }
 
     """
     results = {}
-    for item in datastruct:
+    for item in _list:
         results[item[indexkey]] = item
     return results
 
 # -------------------------------------------------------
 
-def loh_sort_by_key(datastruct, indexkey):
+
+def lod_sort_by_key(_list, indexkey):
     """
-    Sorts a list of hashes by a given key in the hashes
+    Sorts a list of dictionaries by a given key in the dictionaries
     note: this is a destructive operation
     """
-    datastruct.sort(lambda a, b: a[indexkey] < b[indexkey])
-    return datastruct
+    _list.sort(lambda a, b: a[indexkey] < b[indexkey])
+    return _list
+
 
 def dhcpconf_location(api):
     version = api.os_version
     (dist, ver) = api.get_os_details()
-    if version[0] in [ "redhat", "centos" ] and version[1] < 6:
+    if version[0] in ["redhat", "centos"] and version[1] < 6:
         return "/etc/dhcpd.conf"
-    elif version[0] in [ "fedora" ] and version[1] < 11: 
+    elif version[0] in ["fedora"] and version[1] < 11:
         return "/etc/dhcpd.conf"
     elif dist == "suse":
         return "/etc/dhcpd.conf"
@@ -2225,6 +1992,7 @@ def dhcpconf_location(api):
     else:
         return "/etc/dhcp/dhcpd.conf"
 
+
 def namedconf_location(api):
     (dist, ver) = api.os_version
     if dist == "debian" or dist == "ubuntu":
@@ -2232,12 +2000,14 @@ def namedconf_location(api):
     else:
         return "/etc/named.conf"
 
+
 def zonefile_base(api):
     (dist, version) = api.os_version
     if dist == "debian" or dist == "ubuntu":
         return "/etc/bind/db."
     else:
         return "/var/named/"
+
 
 def dhcp_service_name(api):
     (dist, version) = api.os_version
@@ -2252,12 +2022,14 @@ def dhcp_service_name(api):
     else:
         return "dhcpd"
 
+
 def named_service_name(api):
     (dist, ver) = api.os_version
     if dist == "debian" or dist == "ubuntu":
         return "bind9"
     else:
         return "named"
+
 
 def link_distro(settings, distro):
     # find the tree location
@@ -2275,18 +2047,18 @@ def link_distro(settings, distro):
             os.symlink(base, dest_link)
         except:
             # this shouldn't happen but I've seen it ... debug ...
-            print _("- symlink creation failed: %(base)s, %(dest)s") % { "base" : base, "dest" : dest_link }
+            print _("- symlink creation failed: %(base)s, %(dest)s") % {"base": base, "dest": dest_link}
+
 
 def find_distro_path(settings, distro):
-    possible_dirs = glob.glob(settings.webdir+"/ks_mirror/*")
+    possible_dirs = glob.glob(settings.webdir + "/distro_mirror/*")
     for dir in possible_dirs:
         if os.path.dirname(distro.kernel).find(dir) != -1:
-            return os.path.join(settings.webdir, "ks_mirror", dir)
+            return os.path.join(settings.webdir, "distro_mirror", dir)
     # non-standard directory, assume it's the same as the
     # directory in which the given distro's kernel is
     return os.path.dirname(distro.kernel)
 
+
 if __name__ == "__main__":
-    print os_release() # returns 2, not 3
-
-
+    print os_release()  # returns 2, not 3

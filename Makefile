@@ -1,24 +1,76 @@
-#MESSAGESPOT=po/messages.pot
 
 TOP_DIR:=$(shell pwd)
+DESTDIR=/
 
 prefix=devinstall
 statepath=/tmp/cobbler_settings/$(prefix)
 
 all: clean build
 
+
 clean:
-	-rm -rf build rpm-build
-	-rm -f *~
-	-rm -f cobbler/*.pyc
-	-rm -rf dist
-	-rm -rf buildiso
-	-rm MANIFEST
-	-rm -f koan/*.pyc
-	-rm -f config/version
-	-rm -f docs/*.1.gz 
-	-rm *.tmp
-	-rm *.log
+	@echo "cleaning: python bytecode"
+	@rm -f *.pyc
+	@rm -f cobbler/*.pyc
+	@rm -f cobbler/modules/*.pyc
+	@rm -f cobbler/web/*.pyc
+	@rm -f cobbler/web/templatetags/*.pyc
+	@rm -f koan/*.pyc
+	@rm -f koan/live/*.pyc
+	@echo "cleaning: build artifacts"
+	@rm -rf build rpm-build release
+	@rm -rf dist
+	@rm -f MANIFEST AUTHORS
+	@rm -f config/version
+	@rm -f docs/*.1.gz
+	@echo "cleaning: temp files"
+	@rm -f *~
+	@rm -rf buildiso
+	@rm -f *.tmp
+	@rm -f *.log
+	@echo "cleaning: documentation"
+	@cd docs; make clean > /dev/null 2>&1
+
+doc:
+	@echo "creating: documentation"
+	@cd docs; make html > /dev/null 2>&1
+
+qa:
+	@echo "checking: pyflakes"
+	@pyflakes \
+		*.py \
+		cobbler/*.py \
+		cobbler/modules/*.py \
+		cobbler/web/*.py cobbler/web/templatetags/*.py \
+		bin/cobbler* bin/*.py bin/koan web/cobbler.wsgi \
+		koan/*.py
+	@echo "checking: pep8"
+	@pep8 -r --ignore E303,E501 \
+        *.py \
+        cobbler/*.py \
+        cobbler/modules/*.py \
+        cobbler/web/*.py cobbler/web/templatetags/*.py \
+        bin/cobbler* bin/*.py bin/koan web/cobbler.wsgi \
+        koan/*.py
+
+authors:
+	@echo "creating: AUTHORS"
+	@cp AUTHORS.in AUTHORS
+	@git log --format='%aN <%aE>' | grep -v 'root' | sort -u >> AUTHORS
+
+sdist: authors
+	@echo "creating: sdist"
+	@python setup.py sdist > /dev/null
+
+release: clean qa authors sdist doc
+	@echo "creating: release artifacts"
+	@mkdir release
+	@cp dist/*.gz release/
+	@cp cobbler.spec release/
+	@cp debian/cobbler.dsc release/
+	@cp debian/changelog release/debian.changelog
+	@cp debian/control release/debian.control
+	@cp debian/rules release/debian.rules
 
 test:
 	make savestate prefix=test
@@ -31,102 +83,76 @@ test:
 	/sbin/service cobblerd restart
 
 nosetests:
-	PYTHONPATH=./cobbler/ nosetests -v -w newtests/ 2>&1 | tee test.log
+	PYTHONPATH=./cobbler/ nosetests -v -w tests/cli/ 2>&1 | tee test.log
 
 build:
 	python setup.py build -f
 
-# Assume we're on RedHat by default ('apache' user),
-# otherwise Debian / Ubuntu ('www-data' user)
+# Debian/Ubuntu requires an additional parameter in setup.py
 install: build
-	if [ -n "`getent passwd apache`" ] ; then \
-		python setup.py install -f; \
-		chown -R apache /usr/share/cobbler/web; \
-		chown -R apache /var/lib/cobbler/webui_sessions; \
+	if [ -e /etc/debian_version ]; then \
+		python setup.py install --root $(DESTDIR) -f --install-layout=deb; \
 	else \
-		python setup.py install -f --install-layout=deb; \
-		chown -R www-data /usr/share/cobbler/web; \
-		chown -R www-data /var/lib/cobbler/webui_sessions; \
+		python setup.py install --root $(DESTDIR) -f; \
 	fi
 
 devinstall:
-	-rm -rf /usr/share/cobbler
+	-rm -rf $(DESTDIR)/usr/share/cobbler
 	make savestate
 	make install
 	make restorestate
 
 savestate:
-	mkdir -p $(statepath)
-	cp -a /var/lib/cobbler/config $(statepath)
-	cp /etc/cobbler/settings $(statepath)/settings
-	cp /etc/cobbler/modules.conf $(statepath)/modules.conf
-	@if [ -d /etc/httpd ] ; then \
-		cp /etc/httpd/conf.d/cobbler.conf $(statepath)/http.conf; \
-		cp /etc/httpd/conf.d/cobbler_web.conf $(statepath)/cobbler_web.conf; \
-	else \
-		cp /etc/apache2/conf.d/cobbler.conf $(statepath)/http.conf; \
-		cp /etc/apache2/conf.d/cobbler_web.conf $(statepath)/cobbler_web.conf; \
-	fi
-	cp /etc/cobbler/users.conf $(statepath)/users.conf
-	cp /etc/cobbler/users.digest $(statepath)/users.digest
-	cp /etc/cobbler/dhcp.template $(statepath)/dhcp.template
-	cp /etc/cobbler/rsync.template $(statepath)/rsync.template
+	python setup.py -v savestate --root $(DESTDIR); \
 
 
-# Assume we're on RedHat by default, otherwise Debian / Ubuntu
+# Check if we are on Red Hat, Suse or Debian based distribution
 restorestate:
-	cp -a $(statepath)/config /var/lib/cobbler
-	cp $(statepath)/settings /etc/cobbler/settings
-	cp $(statepath)/modules.conf /etc/cobbler/modules.conf
-	cp $(statepath)/users.conf /etc/cobbler/users.conf
-	cp $(statepath)/users.digest /etc/cobbler/users.digest
-	if [ -d /etc/httpd ] ; then \
-		cp $(statepath)/http.conf /etc/httpd/conf.d/cobbler.conf; \
-		cp $(statepath)/cobbler_web.conf /etc/httpd/conf.d/cobbler_web.conf; \
-	else \
-		cp $(statepath)/http.conf /etc/apache2/conf.d/cobbler.conf; \
-		cp $(statepath)/cobbler_web.conf /etc/apache2/conf.d/cobbler_web.conf; \
-	fi
-	cp $(statepath)/dhcp.template /etc/cobbler/dhcp.template
-	cp $(statepath)/rsync.template /etc/cobbler/rsync.template
-	find /var/lib/cobbler/triggers | xargs chmod +x
+	python setup.py -v restorestate --root $(DESTDIR); \
+	find $(DESTDIR)/var/lib/cobbler/triggers | xargs chmod +x
 	if [ -n "`getent passwd apache`" ] ; then \
-		chown -R apache /var/www/cobbler; \
-	else \
-		chown -R www-data /usr/share/cobbler/webroot/cobbler; \
+		chown -R apache $(DESTDIR)/var/www/cobbler; \
+	elif [ -n "`getent passwd wwwrun`" ] ; then \
+		chown -R wwwrun $(DESTDIR)/usr/share/cobbler/web; \
+	elif [-n "`getent passwd www-data`"] ; then \
+		chown -R www-data $(DESTDIR)/usr/share/cobbler/web; \
 	fi
-	if [ -d /var/www/cobbler ] ; then \
-		chmod -R +x /var/www/cobbler/web; \
-		chmod -R +x /var/www/cobbler/svc; \
+	if [ -d $(DESTDIR)/var/www/cobbler ] ; then \
+		chmod -R +x $(DESTDIR)/var/www/cobbler/web; \
+		chmod -R +x $(DESTDIR)/var/www/cobbler/svc; \
 	fi
-	if [ -d /usr/share/cobbler/webroot ] ; then \
-		chmod -R +x /usr/share/cobbler/webroot/cobbler/web; \
-		chmod -R +x /usr/share/cobbler/webroot/cobbler/svc; \
+	if [ -d $(DESTDIR)/usr/share/cobbler/web ] ; then \
+		chmod -R +x $(DESTDIR)/usr/share/cobbler/web; \
+	fi
+	if [ -d $(DESTDIR)/srv/www/cobbler/svc ]; then \
+		chmod -R +x $(DESTDIR)/srv/www/cobbler/svc; \
 	fi
 	rm -rf $(statepath)
-
-completion:
-	python mkbash.py
 
 webtest: devinstall
 	make clean
 	make devinstall
 	make restartservices
 
-# Assume we're on RedHat by default, otherwise Debian / Ubuntu
+# Check if we are on Red Hat, Suse or Debian based distribution
 restartservices:
 	if [ -x /sbin/service ] ; then \
 		/sbin/service cobblerd restart; \
-		/sbin/service httpd restart; \
+		if [ -f /etc/init.d/httpd ] ; then \
+			/sbin/service httpd restart; \
+		elif [ -f /usr/lib/systemd/system/httpd.service ]; then \
+			/bin/systemctl restart httpd.service; \
+		else \
+			/sbin/service apache2 restart; \
+		fi; \
+	elif [ -x /bin/systemctl ]; then \
+		/bin/systemctl restart httpd.service; \
 	else \
 		/usr/sbin/service cobblerd restart; \
 		/usr/sbin/service apache2 restart; \
 	fi
 
-sdist: clean
-	python setup.py sdist
-
-rpms: clean sdist
+rpms: release
 	mkdir -p rpm-build
 	cp dist/*.gz rpm-build/
 	rpmbuild --define "_topdir %(pwd)/rpm-build" \
@@ -139,17 +165,15 @@ rpms: clean sdist
 	-ba cobbler.spec
 
 eraseconfig:
-	-rm /var/lib/cobbler/distros*
-	-rm /var/lib/cobbler/profiles*
-	-rm /var/lib/cobbler/systems*
-	-rm /var/lib/cobbler/repos*
-	-rm /var/lib/cobbler/networks*
-	-rm /var/lib/cobbler/config/distros.d/*
-	-rm /var/lib/cobbler/config/images.d/*
-	-rm /var/lib/cobbler/config/profiles.d/*
-	-rm /var/lib/cobbler/config/systems.d/*
-	-rm /var/lib/cobbler/config/repos.d/*
-	-rm /var/lib/cobbler/config/networks.d/*
+	-rm /var/lib/cobbler/collections/distros/*
+	-rm /var/lib/cobbler/collections/images/*
+	-rm /var/lib/cobbler/collections/profiles/*
+	-rm /var/lib/cobbler/collections/systems/*
+	-rm /var/lib/cobbler/collections/repos/*
+	-rm /var/lib/cobbler/collections/mgmtclasses/*
+	-rm /var/lib/cobbler/collections/files/*
+	-rm /var/lib/cobbler/collections/packages/*
 
-tags:
-	find . -type f -name '*.py' | xargs etags -c TAGS
+.PHONY: tags
+tags: 
+	find . \( -name build -o -name .git \) -prune -o -type f -name '*.py' -print | xargs etags -o TAGS --

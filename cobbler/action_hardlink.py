@@ -22,28 +22,29 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 
 import os
 import utils
-from cexceptions import *
+
 import clogger
+
 
 class HardLinker:
 
-    def __init__(self,config,logger=None):
+    def __init__(self, collection_mgr, logger=None):
         """
         Constructor
         """
-        #self.config   = config
-        #self.api      = config.api
-        #self.settings = config.settings()
+        # self.collection_mgr   = collection_mgr
+        # self.api      = collection_mgr.api
+        # self.settings = collection_mgr.settings()
         if logger is None:
-            logger       = clogger.Logger()
-        self.logger      = logger
-        self.distro      = utils.check_dist()
-        if self.distro == "ubuntu" or self.distro == "debian":
-            self.hardlink      = "/usr/bin/hardlink"
-            self.hardlink_args = "-f -p -o -t -v /var/www/cobbler/ks_mirror /var/www/cobbler/repo_mirror"
+            logger = clogger.Logger()
+        self.logger = logger
+        self.family = utils.get_family()
+        if self.family == "debian":
+            self.hardlink = "/usr/bin/hardlink"
+            self.hardlink_args = "-f -p -o -t -v /var/www/cobbler/distro_mirror /var/www/cobbler/repo_mirror"
         else:
-            self.hardlink      = "/usr/sbin/hardlink"
-            self.hardlink_args = "-c -v /var/www/cobbler/ks_mirror /var/www/cobbler/repo_mirror"
+            self.hardlink = "/usr/sbin/hardlink"
+            self.hardlink_args = "-c -v /var/www/cobbler/distro_mirror /var/www/cobbler/repo_mirror"
         self.hardlink_cmd = "%s %s" % (self.hardlink, self.hardlink_args)
 
 
@@ -58,17 +59,16 @@ class HardLinker:
         # changes will be required here.
 
         if not os.path.exists(self.hardlink):
-            utils.die(self.logger,"please install 'hardlink' (%s) to use this feature" % self.hardlink)
+            utils.die(self.logger, "please install 'hardlink' (%s) to use this feature" % self.hardlink)
 
         self.logger.info("now hardlinking to save space, this may take some time.")
 
-        rc = utils.subprocess_call(self.logger,self.hardlink_cmd,shell=True)
+        rc = utils.subprocess_call(self.logger, self.hardlink_cmd, shell=True)
         # FIXME: how about settings? (self.settings.webdir)
         webdir = "/var/www/cobbler"
         if os.path.exists("/srv/www"):
             webdir = "/srv/www/cobbler"
 
-        rc = utils.subprocess_call(self.logger,"/usr/sbin/hardlink -c -v "+webdir+"/ks_mirror /var/www/cobbler/repo_mirror",shell=True)
+        rc = utils.subprocess_call(self.logger, "/usr/sbin/hardlink -c -v " + webdir + "/distro_mirror /var/www/cobbler/repo_mirror", shell=True)
 
         return rc
-

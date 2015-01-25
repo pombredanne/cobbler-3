@@ -10,22 +10,19 @@ general public license.
 
 You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
-Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+02110-1301  USA.
 """
 
 import distutils.sysconfig
 import sys
-import os
+
 from cobbler import utils
-from utils import _
-import traceback
 
 plib = distutils.sysconfig.get_python_lib()
-mod_path="%s/cobbler" % plib
+mod_path = "%s/cobbler" % plib
 sys.path.insert(0, mod_path)
 
-import cexceptions
-import utils
 
 def register():
     """
@@ -33,15 +30,15 @@ def register():
     """
     return "authn"
 
-def authenticate(api_handle,username,password):
+
+def authenticate(api_handle, username, password):
     """
     Validate a username/password combo, returning True/False
     Uses cobbler_auth_helper
     """
     ss = utils.get_shared_secret()
     if password == ss:
-       rc = True
+        rc = True
     else:
-       rc = False
+        rc = False
     return rc
-

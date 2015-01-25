@@ -25,8 +25,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 import Cheetah.Template
 import os.path
 import re
+
+from cexceptions import FileNotFoundException
 import utils
-from cexceptions import *
 
 CHEETAH_MACROS_FILE = '/etc/cobbler/cheetah_macros'
 
@@ -40,34 +41,35 @@ BuiltinTemplate = Cheetah.Template.Template.compile(source="\n".join([
     # for the other part) handles the actual inclusion of the file contents. We
     # still need to make the snippet's namespace (searchList) available to the
     # template calling SNIPPET (done in the other part).
-    
+
     # Moved the other functions into /etc/cobbler/cheetah_macros
     # Left SNIPPET here since it is very important.
 
     # This function can be used in two ways:
     # Cheetah syntax:
-    # 
+    #
     # $SNIPPET('my_snippet')
-    # 
+    #
     # SNIPPET syntax:
-    # 
+    #
     # SNIPPET::my_snippet
-    # 
+    #
     # This follows all of the rules of snippets and advanced snippets. First it
     # searches for a per-system snippet, then a per-profile snippet, then a
     # general snippet. If none is found, a comment explaining the error is
     # substituted.
     "#def SNIPPET($file)",
-        "#set $snippet = $read_snippet($file)",
-        "#if $snippet",
-            "#include source=$snippet",
-        "#else",
-            "# Error: no snippet data for $file",
-        "#end if",
+    "#set $snippet = $read_snippet($file)",
+    "#if $snippet",
+    "#include source=$snippet",
+    "#else",
+    "# Error: no snippet data for $file",
+    "#end if",
     "#end def",
 ]) + "\n")
 
 MacrosTemplate = Cheetah.Template.Template.compile(file=CHEETAH_MACROS_FILE)
+
 
 class Template(BuiltinTemplate, MacrosTemplate):
 
@@ -77,7 +79,7 @@ class Template(BuiltinTemplate, MacrosTemplate):
     both types (cheetah and pure python) of builtins in the same base template.
     We don't need to override __init__
     """
- 
+
     # OK, so this function gets called by Cheetah.Template.Template.__init__ to
     # compile the template into a class. This is probably a kludge, but it
     # add a baseclass argument to the standard compile (see Cheetah's compile
@@ -99,34 +101,35 @@ class Template(BuiltinTemplate, MacrosTemplate):
             # Normally, the cheetah compiler worries about this, but we need to
             # preprocess the actual source
             if source is None:
-                if isinstance(file, (str, unicode)):
+                if isinstance(file, basestring):
                     if os.path.exists(file):
-                       f = open(file)
-                       source = "#errorCatcher Echo\n" + f.read()
-                       f.close()
+                        f = open(file)
+                        source = "#errorCatcher Echo\n" + f.read()
+                        f.close()
                     else:
-                       source = "# Unable to read %s\n" % file
+                        source = "# Unable to read %s\n" % file
                 elif hasattr(file, 'read'):
                     source = file.read()
-                file = None # Stop Cheetah from throwing a fit.
+                file = None     # Stop Cheetah from throwing a fit.
 
-             
+
             rx = re.compile(r'SNIPPET::([A-Za-z0-9_\-\/\.]+)')
             results = rx.sub(replacer, source)
             return (results, file)
         preprocessors = [preprocess]
-        if kwargs.has_key('preprocessors'):
+        if 'preprocessors' in kwargs:
             preprocessors.extend(kwargs['preprocessors'])
         kwargs['preprocessors'] = preprocessors
-        
+
         # Instruct Cheetah to use this class as the base for all cheetah templates
-        if not kwargs.has_key('baseclass'):
+        if 'baseclass' not in kwargs:
             kwargs['baseclass'] = Template
-        
+
         # Now let Cheetah do the actual compilation
         return Cheetah.Template.Template.compile(*args, **kwargs)
     compile = classmethod(compile)
-    
+
+
     def read_snippet(self, file):
         """
         Locate the appropriate snippet for the current system and profile and
@@ -140,16 +143,17 @@ class Template(BuiltinTemplate, MacrosTemplate):
         """
         for snipclass in ('system', 'profile', 'distro'):
             if self.varExists('%s_name' % snipclass):
-                fullpath = '%s/per_%s/%s/%s' % (self.getVar('snippetsdir'),
-                    snipclass, file, self.getVar('%s_name' % snipclass))
+                fullpath = '%s/per_%s/%s/%s' % (self.getVar('autoinstall_snippets_dir'),
+                                                snipclass, file,
+                                                self.getVar('%s_name' % snipclass))
                 try:
                     contents = utils.read_file_contents(fullpath, fetch_if_remote=True)
                     return contents
                 except FileNotFoundException:
                     pass
 
-        try: 
-            return "#errorCatcher ListErrors\n" + utils.read_file_contents('%s/%s' % (self.getVar('snippetsdir'), file), fetch_if_remote=True)
+        try:
+            return "#errorCatcher ListErrors\n" + utils.read_file_contents('%s/%s' % (self.getVar('autoinstall_snippets_dir'), file), fetch_if_remote=True)
         except FileNotFoundException:
             return None
 
@@ -177,7 +181,7 @@ class Template(BuiltinTemplate, MacrosTemplate):
         # are no longer filenames but actual contents of snippets. Regardless
         # this seems to work and hopefully it will be ok.
 
-        snippet_contents = self.read_snippet(file);
+        snippet_contents = self.read_snippet(file)
         if snippet_contents:
             # Only include what we don't already have. Because Cheetah
             # passes our searchList into included templates, the snippet's
@@ -186,27 +190,26 @@ class Template(BuiltinTemplate, MacrosTemplate):
             childList = self._CHEETAH__cheetahIncludes[snippet_contents].searchList()
             myList = self.searchList()
             for childElem in childList:
-                if not childElem in myList:
+                if childElem not in myList:
                     myList.append(childElem)
-        
+
         return result
-    
+
     # This function is used by several cheetah methods in cheetah_macros.
     # It can be used by the end user as well.
     # Ex: Replace all instances of '/etc/banner' with a value stored in
     # $new_banner
-    # 
+    #
     # sed 's/$sedesc("/etc/banner")/$sedesc($new_banner)/'
-    # 
+    #
     def sedesc(self, value):
         """
-	Escape a string for use in sed.
-	"""
+        Escape a string for use in sed.
+        """
+
         def escchar(c):
             if c in '/^.[]$()|*+?{}\\':
                 return '\\' + c
             else:
                 return c
         return ''.join([escchar(c) for c in value])
-
-

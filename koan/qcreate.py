@@ -20,11 +20,12 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 02110-1301  USA
 
 module for creating fullvirt guests via KVM/kqemu/qemu
-requires python-virtinst-0.200.
+requires python-virtinst-0.200 (or virt-install in later distros).
 """
 
 import utils
 import virtinstall
+
 
 def start_install(*args, **kwargs):
     virtinstall.create_image_file(*args, **kwargs)
