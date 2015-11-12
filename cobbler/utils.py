@@ -1361,13 +1361,10 @@ def set_virt_disk_driver(self, driver):
     For Virt only.
     Specifies the on-disk format for the virtualized disk
     """
-    # FIXME: we should probably check the driver type
-    #        here against the libvirt/virtinst list of
-    #        drivers, but this makes things more flexible
-    #        meaning we don't have to manage this list
-    #        and it's up to the user not to enter an
-    #        unsupported disk format
-    self.virt_disk_driver = driver
+    if driver in validate.VIRT_DISK_DRIVERS:
+        self.virt_disk_driver = driver
+    else:
+        raise CX(_("invalid virt disk driver type (%s)" % driver))
 
 
 def set_virt_auto_boot(self, num):
@@ -1559,8 +1556,6 @@ def get_mtab(mtab="/etc/mtab", vfstype=None):
 
 
 def __cache_mtab__(mtab="/etc/mtab"):
-    global mtab_mtime
-
     f = open(mtab)
     mtab = [MntEntObj(line) for line in f.read().split('\n') if len(line) > 0]
     f.close()
@@ -1658,7 +1653,7 @@ def subprocess_get(logger, cmd, shell=True, input=None):
 
 
 def get_supported_system_boot_loaders():
-    return ["<<inherit>>", "elilo", "grub", "grub2", "pxelinux", "yaboot"]
+    return ["<<inherit>>", "grub", "grub2", "pxelinux", "yaboot", "ipxe"]
 
 
 def get_supported_distro_boot_loaders(distro, api_handle=None):
@@ -1758,7 +1753,7 @@ def to_dict_from_fields(item, fields):
     return _dict
 
 
-def to_string_from_fields(item_dict, fields):
+def to_string_from_fields(item_dict, fields, interface_fields=None):
     """
     item_dict is a dictionary, fields is something like item_distro.FIELDS
     """
@@ -1772,7 +1767,7 @@ def to_string_from_fields(item_dict, fields):
         # FIXME: supress fields users don't need to see?
         # FIXME: interfaces should be sorted
         # FIXME: print ctime, mtime nicely
-        if k.startswith("*") or not editable:
+        if not editable:
             continue
 
         if k != "name":
@@ -1781,14 +1776,17 @@ def to_string_from_fields(item_dict, fields):
 
     # somewhat brain-melting special handling to print the dicts
     # inside of the interfaces more neatly.
-    if "interfaces" in item_dict:
+    if "interfaces" in item_dict and interface_fields is not None:
+        keys = []
+        for elem in interface_fields:
+            keys.append((elem[0], elem[3], elem[4]))
+        keys.sort()
         for iname in item_dict["interfaces"].keys():
             # FIXME: inames possibly not sorted
             buf += "%-30s : %s\n" % ("Interface ===== ", iname)
             for (k, nicename, editable) in keys:
-                nkey = k.replace("*", "")
-                if k.startswith("*") and editable:
-                    buf += "%-30s : %s\n" % (nicename, item_dict["interfaces"][iname].get(nkey, ""))
+                if editable:
+                    buf += "%-30s : %s\n" % (nicename, item_dict["interfaces"][iname].get(k, ""))
 
     return buf
 
@@ -2059,6 +2057,11 @@ def find_distro_path(settings, distro):
     # directory in which the given distro's kernel is
     return os.path.dirname(distro.kernel)
 
+
+def compare_versions_gt(ver1, ver2):
+    def versiontuple(v):
+        return tuple(map(int, (v.split("."))))
+    return versiontuple(ver1) > versiontuple(ver2)
 
 if __name__ == "__main__":
     print os_release()  # returns 2, not 3

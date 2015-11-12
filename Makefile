@@ -15,12 +15,9 @@ clean:
 	@rm -f cobbler/modules/*.pyc
 	@rm -f cobbler/web/*.pyc
 	@rm -f cobbler/web/templatetags/*.pyc
-	@rm -f koan/*.pyc
-	@rm -f koan/live/*.pyc
 	@echo "cleaning: build artifacts"
-	@rm -rf build rpm-build release
-	@rm -rf dist
-	@rm -f MANIFEST AUTHORS
+	@rm -rf build rpm-build release dist
+	@rm -f MANIFEST AUTHORS README
 	@rm -f config/version
 	@rm -f docs/*.1.gz
 	@echo "cleaning: temp files"
@@ -30,6 +27,10 @@ clean:
 	@rm -f *.log
 	@echo "cleaning: documentation"
 	@cd docs; make clean > /dev/null 2>&1
+
+readme:
+	@echo "creating: README"
+	@cat README.md | sed -e 's/^\[!.*//g' | tail -n "+3" > README
 
 doc:
 	@echo "creating: documentation"
@@ -42,27 +43,25 @@ qa:
 		cobbler/*.py \
 		cobbler/modules/*.py \
 		cobbler/web/*.py cobbler/web/templatetags/*.py \
-		bin/cobbler* bin/*.py bin/koan web/cobbler.wsgi \
-		koan/*.py
+		bin/cobbler* bin/*.py web/cobbler.wsgi
 	@echo "checking: pep8"
-	@pep8 -r --ignore E303,E501 \
+	@pep8 -r --ignore E501 \
         *.py \
         cobbler/*.py \
         cobbler/modules/*.py \
         cobbler/web/*.py cobbler/web/templatetags/*.py \
-        bin/cobbler* bin/*.py bin/koan web/cobbler.wsgi \
-        koan/*.py
+        bin/cobbler* bin/*.py web/cobbler.wsgi
 
 authors:
 	@echo "creating: AUTHORS"
 	@cp AUTHORS.in AUTHORS
 	@git log --format='%aN <%aE>' | grep -v 'root' | sort -u >> AUTHORS
 
-sdist: authors
+sdist: readme authors
 	@echo "creating: sdist"
 	@python setup.py sdist > /dev/null
 
-release: clean qa authors sdist doc
+release: clean qa readme authors sdist doc
 	@echo "creating: release artifacts"
 	@mkdir release
 	@cp dist/*.gz release/
@@ -90,11 +89,7 @@ build:
 
 # Debian/Ubuntu requires an additional parameter in setup.py
 install: build
-	if [ -e /etc/debian_version ]; then \
-		python setup.py install --root $(DESTDIR) -f --install-layout=deb; \
-	else \
-		python setup.py install --root $(DESTDIR) -f; \
-	fi
+	python setup.py install --root $(DESTDIR) -f
 
 devinstall:
 	-rm -rf $(DESTDIR)/usr/share/cobbler
@@ -114,11 +109,10 @@ restorestate:
 		chown -R apache $(DESTDIR)/var/www/cobbler; \
 	elif [ -n "`getent passwd wwwrun`" ] ; then \
 		chown -R wwwrun $(DESTDIR)/usr/share/cobbler/web; \
-	elif [-n "`getent passwd www-data`"] ; then \
+	elif [ -n "`getent passwd www-data`"] ; then \
 		chown -R www-data $(DESTDIR)/usr/share/cobbler/web; \
 	fi
 	if [ -d $(DESTDIR)/var/www/cobbler ] ; then \
-		chmod -R +x $(DESTDIR)/var/www/cobbler/web; \
 		chmod -R +x $(DESTDIR)/var/www/cobbler/svc; \
 	fi
 	if [ -d $(DESTDIR)/usr/share/cobbler/web ] ; then \

@@ -43,7 +43,7 @@ FIELDS = [
     ["boot_files", {}, '<<inherit>>', "TFTP Boot Files", True, "Files copied into tftpboot beyond the kernel/initrd", 0, "list"],
     ["boot_loader", "<<inherit>>", 0, "Boot loader", True, "Linux installation boot loader", utils.get_supported_system_boot_loaders(), "str"],
     ["comment", "", 0, "Comment", True, "Free form text description", 0, "str"],
-    ["enable_gpxe", "SETTINGS:enable_gpxe", 0, "Enable gPXE?", True, "Use gPXE instead of PXELINUX for advanced booting options", 0, "bool"],
+    ["enable_gpxe", "<<inherit>>", 0, "Enable gPXE?", True, "Use gPXE instead of PXELINUX for advanced booting options", 0, "bool"],
     ["fetchable_files", {}, '<<inherit>>', "Fetchable Files", True, "Templates for tftp or wget/curl", 0, "dict"],
     ["gateway", "", 0, "Gateway", True, "", 0, "str"],
     ["hostname", "", 0, "Hostname", True, "", 0, "str"],
@@ -58,7 +58,7 @@ FIELDS = [
     ["name_servers_search", [], 0, "Name Servers Search Path", True, "space delimited", 0, "list"],
     ["netboot_enabled", True, 0, "Netboot Enabled", True, "PXE (re)install this machine at next boot?", 0, "bool"],
     ["next_server", "<<inherit>>", 0, "Next Server Override", True, "See manpage or leave blank", 0, "str"],
-    ["owners", "SETTINGS:default_ownership", 0, "Owners", True, "Owners list for authz_ownership (space delimited)", 0, "list"],
+    ["owners", "<<inherit>>", 0, "Owners", True, "Owners list for authz_ownership (space delimited)", 0, "list"],
     ["power_address", "", 0, "Power Management Address", True, "Ex: power-device.example.org", 0, "str"],
     ["power_id", "", 0, "Power Management ID", True, "Usually a plug number or blade name, if power type requires it", 0, "str"],
     ["power_pass", "", 0, "Power Management Password", True, "", 0, "str"],
@@ -71,7 +71,7 @@ FIELDS = [
     ["template_files", {}, 0, "Template Files", True, "File mappings for built-in configuration management", 0, "dict"],
     ["virt_auto_boot", "<<inherit>>", 0, "Virt Auto Boot", True, "Auto boot this VM?", 0, "bool"],
     ["virt_cpus", "<<inherit>>", 0, "Virt CPUs", True, "", 0, "int"],
-    ["virt_disk_driver", "<<inherit>>", 0, "Virt Disk Driver Type", True, "The on-disk format for the virtualization disk", "raw", "str"],
+    ["virt_disk_driver", "<<inherit>>", 0, "Virt Disk Driver Type", True, "The on-disk format for the virtualization disk", validate.VIRT_DISK_DRIVERS, "str"],
     ["virt_file_size", "<<inherit>>", 0, "Virt File Size(GB)", True, "", 0, "float"],
     ["virt_path", "<<inherit>>", 0, "Virt Path", True, "Ex: /directory or VolGroup00", 0, "str"],
     ["virt_pxe_boot", 0, 0, "Virt PXE Boot", True, "Use PXE to build this VM?", 0, "bool"],
@@ -87,11 +87,12 @@ NETWORK_INTERFACE_FIELDS = [
     ["bonding_opts", "", 0, "Bonding Opts", True, "Should be used with --interface", 0, "str"],
     ["bridge_opts", "", 0, "Bridge Opts", True, "Should be used with --interface", 0, "str"],
     ["cnames", [], 0, "CNAMES", True, "Cannonical Name Records, should be used with --interface, In quotes, space delimited", 0, "list"],
+    ["connected_mode", False, 0, "InfiniBand Connected Mode", True, "Should be used with --interface", 0, "bool"],
     ["dhcp_tag", "", 0, "DHCP Tag", True, "Should be used with --interface", 0, "str"],
     ["dns_name", "", 0, "DNS Name", True, "Should be used with --interface", 0, "str"],
     ["if_gateway", "", 0, "Per-Interface Gateway", True, "Should be used with --interface", 0, "str"],
     ["interface_master", "", 0, "Master Interface", True, "Should be used with --interface", 0, "str"],
-    ["interface_type", "na", 0, "Interface Type", True, "Should be used with --interface", ["na", "bond", "bond_slave", "bridge", "bridge_slave", "bonded_bridge_slave", "bmc"], "str"],
+    ["interface_type", "na", 0, "Interface Type", True, "Should be used with --interface", ["na", "bond", "bond_slave", "bridge", "bridge_slave", "bonded_bridge_slave", "bmc", "infiniband"], "str"],
     ["ip_address", "", 0, "IP Address", True, "Should be used with --interface", 0, "str"],
     ["ipv6_address", "", 0, "IPv6 Address", True, "Should be used with --interface", 0, "str"],
     ["ipv6_default_gateway", "", 0, "IPv6 Default Gateway", True, "Should be used with --interface", 0, "str"],
@@ -127,7 +128,6 @@ class System(item.Item):
         self.boot_files = {}
         self.template_files = {}
 
-
     #
     # override some base class methods first (item.Item)
     #
@@ -135,18 +135,15 @@ class System(item.Item):
     def get_fields(self):
         return FIELDS
 
-
     def make_clone(self):
         _dict = self.to_dict()
         cloned = System(self.collection_mgr)
         cloned.from_dict(_dict)
         return cloned
 
-
     def from_dict(self, seed_data):
         # FIXME: most definitely doesn't grok interfaces yet.
         return utils.from_dict_from_fields(self, seed_data, FIELDS)
-
 
     def get_parent(self):
         """
@@ -159,14 +156,12 @@ class System(item.Item):
         else:
             return self.collection_mgr.systems().find(name=self.parent)
 
-
     def check_if_valid(self):
         if self.name is None or self.name == "":
             raise CX("name is required")
         if self.profile is None or self.profile == "":
             if self.image is None or self.image == "":
                 raise CX("Error with system %s - profile or image is required" % (self.name))
-
 
     #
     # specific methods for item.System
@@ -178,16 +173,14 @@ class System(item.Item):
         for field in NETWORK_INTERFACE_FIELDS:
             self.interfaces[interface][field[0]] = field[1]
 
-
     def __get_interface(self, name):
 
         if not name:
             raise CX(_("No network interface name provided"))
-        if not name in self.interfaces:
+        if name not in self.interfaces:
             self.__create_interface(name)
 
         return self.interfaces[name]
-
 
     def delete_interface(self, name):
         """
@@ -202,7 +195,6 @@ class System(item.Item):
             else:
                 raise CX(_("At least one interface needs to be defined."))
 
-
     def rename_interface(self, names):
         """
         Used to rename an interface.
@@ -216,12 +208,10 @@ class System(item.Item):
             self.interfaces[newname] = self.interfaces[name]
             del self.interfaces[name]
 
-
     def set_boot_loader(self, name):
-        if not name in utils.get_supported_system_boot_loaders():
+        if name not in utils.get_supported_system_boot_loaders():
             raise CX(_("Invalid boot loader name: %s" % name))
         self.boot_loader = name
-
 
     def set_server(self, server):
         """
@@ -232,22 +222,17 @@ class System(item.Item):
             server = "<<inherit>>"
         self.server = server
 
-
     def set_next_server(self, server):
         if server is None or server == "" or server == "<<inherit>>":
             self.next_server = "<<inherit>>"
         else:
             server = server.strip()
-            if server != "<<inherit>>":
-                self.next_server = validate.ipv4_address(server)
-            else:
-                self.next_server = server
+            self.next_server = validate.ipv4_address(server)
 
     def set_proxy(self, proxy):
         if proxy is None or proxy == "":
             proxy = "<<inherit>>"
         self.proxy = proxy
-
 
     def get_mac_address(self, interface):
         """
@@ -262,7 +247,6 @@ class System(item.Item):
         else:
             return None
 
-
     def get_ip_address(self, interface):
         """
         Get the IP address for the given interface.
@@ -272,7 +256,6 @@ class System(item.Item):
             return intf["ip_address"].strip()
         else:
             return ""
-
 
     def is_management_supported(self, cidr_ok=True):
         """
@@ -292,32 +275,26 @@ class System(item.Item):
                 return True
         return False
 
-
     def set_dhcp_tag(self, dhcp_tag, interface):
         intf = self.__get_interface(interface)
         intf["dhcp_tag"] = dhcp_tag
-
 
     def set_cnames(self, cnames, interface):
         intf = self.__get_interface(interface)
         data = utils.input_string_or_list(cnames)
         intf["cnames"] = data
 
-
     def set_static_routes(self, routes, interface):
         intf = self.__get_interface(interface)
         data = utils.input_string_or_list(routes)
         intf["static_routes"] = data
 
-
     def set_status(self, status):
         self.status = status
-
 
     def set_static(self, truthiness, interface):
         intf = self.__get_interface(interface)
         intf["static"] = utils.input_boolean(truthiness)
-
 
     def set_management(self, truthiness, interface):
         intf = self.__get_interface(interface)
@@ -343,7 +320,6 @@ class System(item.Item):
         intf = self.__get_interface(interface)
         intf["dns_name"] = dns_name
 
-
     def set_hostname(self, hostname):
         """
         Set hostname.
@@ -352,7 +328,6 @@ class System(item.Item):
         @returns: True or CX
         """
         self.hostname = validate.hostname(hostname)
-
 
     def set_ip_address(self, address, interface):
         """
@@ -371,7 +346,6 @@ class System(item.Item):
 
         intf = self.__get_interface(interface)
         intf["ip_address"] = address
-
 
     def set_mac_address(self, address, interface):
         """
@@ -393,7 +367,6 @@ class System(item.Item):
         intf = self.__get_interface(interface)
         intf["mac_address"] = address
 
-
     def set_gateway(self, gateway):
         """
         Set a gateway IPv4 address.
@@ -402,7 +375,6 @@ class System(item.Item):
         @returns: True or CX
         """
         self.gateway = validate.ipv4_address(gateway)
-
 
     def set_name_servers(self, data):
         """
@@ -413,7 +385,6 @@ class System(item.Item):
         """
         self.name_servers = validate.name_servers(data)
 
-
     def set_name_servers_search(self, data):
         """
         Set the DNS search paths.
@@ -422,7 +393,6 @@ class System(item.Item):
         @returns: True or CX
         """
         self.name_servers_search = validate.name_servers_search(data)
-
 
     def set_netmask(self, netmask, interface):
         """
@@ -434,7 +404,6 @@ class System(item.Item):
         """
         intf = self.__get_interface(interface)
         intf["netmask"] = validate.ipv4_netmask(netmask)
-
 
     def set_if_gateway(self, gateway, interface):
         """
@@ -455,9 +424,8 @@ class System(item.Item):
         intf = self.__get_interface(interface)
         intf["virt_bridge"] = bridge
 
-
     def set_interface_type(self, type, interface):
-        interface_types = ["bridge", "bridge_slave", "bond", "bond_slave", "bonded_bridge_slave", "bmc", "na", ""]
+        interface_types = ["bridge", "bridge_slave", "bond", "bond_slave", "bonded_bridge_slave", "bmc", "na", "infiniband", ""]
         if type not in interface_types:
             raise CX(_("interface type value must be one of: %s or blank" % ",".join(interface_types)))
         if type == "na":
@@ -465,31 +433,25 @@ class System(item.Item):
         intf = self.__get_interface(interface)
         intf["interface_type"] = type
 
-
     def set_interface_master(self, interface_master, interface):
         intf = self.__get_interface(interface)
         intf["interface_master"] = interface_master
-
 
     def set_bonding_opts(self, bonding_opts, interface):
         intf = self.__get_interface(interface)
         intf["bonding_opts"] = bonding_opts
 
-
     def set_bridge_opts(self, bridge_opts, interface):
         intf = self.__get_interface(interface)
         intf["bridge_opts"] = bridge_opts
 
-
     def set_ipv6_autoconfiguration(self, truthiness):
         self.ipv6_autoconfiguration = utils.input_boolean(truthiness)
-
 
     def set_ipv6_default_device(self, interface_name):
         if interface_name is None:
             interface_name = ""
         self.ipv6_default_device = interface_name
-
 
     def set_ipv6_address(self, address, interface):
         """
@@ -509,14 +471,12 @@ class System(item.Item):
         intf = self.__get_interface(interface)
         intf["ipv6_address"] = address
 
-
     def set_ipv6_prefix(self, prefix, interface):
         """
         Assign a IPv6 prefix
         """
         intf = self.__get_interface(interface)
         intf["ipv6_prefix"] = prefix.strip()
-
 
     def set_ipv6_secondaries(self, addresses, interface):
         intf = self.__get_interface(interface)
@@ -530,7 +490,6 @@ class System(item.Item):
 
         intf["ipv6_secondaries"] = secondaries
 
-
     def set_ipv6_default_gateway(self, address, interface):
         intf = self.__get_interface(interface)
         if address == "" or utils.is_ip(address):
@@ -538,29 +497,28 @@ class System(item.Item):
             return
         raise CX(_("invalid format for IPv6 IP address (%s)") % address)
 
-
     def set_ipv6_static_routes(self, routes, interface):
         intf = self.__get_interface(interface)
         data = utils.input_string_or_list(routes)
         intf["ipv6_static_routes"] = data
 
-
     def set_ipv6_mtu(self, mtu, interface):
         intf = self.__get_interface(interface)
         intf["ipv6_mtu"] = mtu
-
 
     def set_mtu(self, mtu, interface):
         intf = self.__get_interface(interface)
         intf["mtu"] = mtu
 
+    def set_connected_mode(self, truthiness, interface):
+        intf = self.__get_interface(interface)
+        intf["connected_mode"] = utils.input_boolean(truthiness)
 
     def set_enable_gpxe(self, enable_gpxe):
         """
         Sets whether or not the system will use gPXE for booting.
         """
         self.enable_gpxe = utils.input_boolean(enable_gpxe)
-
 
     def set_profile(self, profile_name):
         """
@@ -587,7 +545,6 @@ class System(item.Item):
                 new_parent.children[self.name] = self
             return
         raise CX(_("invalid profile name: %s") % profile_name)
-
 
     def set_image(self, image_name):
         """
@@ -616,18 +573,14 @@ class System(item.Item):
             return
         raise CX(_("invalid image name (%s)") % image_name)
 
-
     def set_virt_cpus(self, num):
         return utils.set_virt_cpus(self, num)
-
 
     def set_virt_file_size(self, num):
         return utils.set_virt_file_size(self, num)
 
-
     def set_virt_disk_driver(self, driver):
         return utils.set_virt_disk_driver(self, driver)
-
 
     def set_virt_auto_boot(self, num):
         return utils.set_virt_auto_boot(self, num)
@@ -635,18 +588,14 @@ class System(item.Item):
     def set_virt_pxe_boot(self, num):
         return utils.set_virt_pxe_boot(self, num)
 
-
     def set_virt_ram(self, num):
         return utils.set_virt_ram(self, num)
-
 
     def set_virt_type(self, vtype):
         return utils.set_virt_type(self, vtype)
 
-
     def set_virt_path(self, path):
         return utils.set_virt_path(self, path, for_system=True)
-
 
     def set_netboot_enabled(self, netboot_enabled):
         """
@@ -664,7 +613,6 @@ class System(item.Item):
         """
         self.netboot_enabled = utils.input_boolean(netboot_enabled)
 
-
     def set_autoinstall(self, autoinstall):
         """
         Set the automatic installation template filepath, this must be a local file.
@@ -674,7 +622,6 @@ class System(item.Item):
 
         autoinstall_mgr = autoinstall_manager.AutoInstallationManager(self.collection_mgr)
         self.autoinstall = autoinstall_mgr.validate_autoinstall_template_file_path(autoinstall)
-
 
     def set_power_type(self, power_type):
         if power_type is None:
@@ -688,20 +635,17 @@ class System(item.Item):
         utils.safe_filter(power_user)
         self.power_user = power_user
 
-
     def set_power_pass(self, power_pass):
         if power_pass is None:
             power_pass = ""
         utils.safe_filter(power_pass)
         self.power_pass = power_pass
 
-
     def set_power_address(self, power_address):
         if power_address is None:
             power_address = ""
         utils.safe_filter(power_address)
         self.power_address = power_address
-
 
     def set_power_id(self, power_id):
         if power_id is None:
@@ -723,6 +667,9 @@ class System(item.Item):
 
             if field == "bridgeopts":
                 self.set_bridge_opts(value, interface)
+
+            if field == "connected_mode":
+                self.set_connected_mode(value, interface)
 
             if field == "cnames":
                 self.set_cnames(value, interface)
@@ -783,8 +730,6 @@ class System(item.Item):
 
             if field == "virtbridge":
                 self.set_virt_bridge(value, interface)
-
-
 
     def set_repos_enabled(self, repos_enabled):
         self.repos_enabled = utils.input_boolean(repos_enabled)

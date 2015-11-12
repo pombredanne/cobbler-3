@@ -25,6 +25,7 @@ from cexceptions import CX
 import time
 
 import templar
+import utils
 from utils import _
 
 
@@ -59,7 +60,6 @@ class DnsmasqManager:
 
     def remove_dhcp_lease(self, port, host):
         pass
-
 
     def write_dhcp_file(self):
         """
@@ -96,6 +96,7 @@ class DnsmasqManager:
                 mac = interface["mac_address"]
                 ip = interface["ip_address"]
                 host = interface["dns_name"]
+                ipv6 = interface["ipv6_address"]
 
                 if mac is None or mac == "":
                     # can't write a DHCP entry for this system
@@ -118,6 +119,8 @@ class DnsmasqManager:
 
                 if ip is not None and ip != "":
                     systxt += "," + ip
+                if ipv6 is not None and ipv6 != "":
+                    systxt += ",[%s]" % ipv6
 
                 systxt += "\n"
 
@@ -175,15 +178,27 @@ class DnsmasqManager:
                 mac = interface["mac_address"]
                 host = interface["dns_name"]
                 ip = interface["ip_address"]
+                ipv6 = interface["ipv6_address"]
                 if mac is None or mac == "":
                     continue
-                if host is not None and host != "" and ip is not None and ip != "":
+                if host is not None and host != "" and ipv6 is not None and ipv6 != "":
+                    fh.write(ipv6 + "\t" + host + "\n")
+                elif host is not None and host != "" and ip is not None and ip != "":
                     fh.write(ip + "\t" + host + "\n")
         fh.close()
 
     def write_dns_files(self):
         # already taken care of by the regen_hosts()
         pass
+
+    def sync_dhcp(self):
+        restart_dhcp = str(self.settings.restart_dhcp).lower()
+        if restart_dhcp != "0":
+            rc = utils.subprocess_call(self.logger, "service dnsmasq restart")
+            if rc != 0:
+                error_msg = "service dnsmasq restart failed"
+                self.logger.error(error_msg)
+                raise CX(error_msg)
 
 
 def get_manager(collection_mgr, logger):

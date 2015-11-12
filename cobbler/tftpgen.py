@@ -254,7 +254,7 @@ class TFTPGen:
                 if blended_system["boot_loader"] == "pxelinux":
                     # pxelinux wants a file named $name under pxelinux.cfg
                     f2 = os.path.join(self.bootloc, "pxelinux.cfg", f1)
-                elif distro.boot_loader == "grub2":
+                elif distro.boot_loader == "grub2" or blended_system["boot_loader"] == "grub2":
                     f2 = os.path.join(self.bootloc, "boot/grub", "grub.cfg-" + filename)
                 else:
                     f2 = os.path.join(self.bootloc, "etc", filename)
@@ -327,7 +327,6 @@ class TFTPGen:
                 include_header=False, format="grub")
             if grub_contents is not None:
                 grub_menu_items += grub_contents + "\n"
-
 
         # image names towards the bottom
         for image in image_list:
@@ -421,7 +420,6 @@ class TFTPGen:
         self.templar.render(template_data, metadata, outfile, None)
         template_src.close()
 
-
     def write_pxe_file(self, filename, system, profile, distro, arch,
                        image=None, include_header=True, metadata=None, format="pxe"):
         """
@@ -463,6 +461,9 @@ class TFTPGen:
             if 'nexenta' == distro.breed:
                 kernel_path = os.path.join("/images", distro.name, 'platform', 'i86pc', 'kernel', 'amd64', os.path.basename(distro.kernel))
                 initrd_path = os.path.join("/images", distro.name, 'platform', 'i86pc', 'amd64', os.path.basename(distro.initrd))
+            elif 'http' in distro.kernel and 'http' in distro.initrd:
+                kernel_path = distro.kernel
+                initrd_path = distro.initrd
             else:
                 kernel_path = os.path.join("/images", distro.name, os.path.basename(distro.kernel))
                 initrd_path = os.path.join("/images", distro.name, os.path.basename(distro.initrd))
@@ -516,7 +517,7 @@ class TFTPGen:
                         blended_system = utils.blender(self.api, False, system)
                         if blended_system["boot_loader"] == "pxelinux":
                             template = os.path.join(self.settings.boot_loader_conf_template_dir, "pxesystem_ppc.template")
-                        elif distro.boot_loader == "grub2":
+                        elif distro.boot_loader == "grub2" or blended_system["boot_loader"] == "grub2":
                             template = os.path.join(self.settings.boot_loader_conf_template_dir, "grub2_ppc.template")
                         else:
                             template = os.path.join(self.settings.boot_loader_conf_template_dir, "yaboot_ppc.template")
@@ -568,7 +569,6 @@ class TFTPGen:
             else:
                 template = os.path.join(self.settings.boot_loader_conf_template_dir, "pxeprofile.template")
 
-
         if kernel_path is not None:
             metadata["kernel_path"] = kernel_path
         if initrd_path is not None:
@@ -607,7 +607,6 @@ class TFTPGen:
 
         if system:
             metadata["system_name"] = system.name
-
 
         # get the template
         if kernel_path is not None:
@@ -964,6 +963,8 @@ class TFTPGen:
                 template = os.path.join(self.settings.boot_loader_conf_template_dir, "gpxe_%s_esxi6.template" % what.lower())
         elif distro.breed == 'freebsd':
             template = os.path.join(self.settings.boot_loader_conf_template_dir, "gpxe_%s_freebsd.template" % what.lower())
+        elif distro.breed == 'windows':
+            template = os.path.join(self.settings.boot_loader_conf_template_dir, "gpxe_%s_windows.template" % what.lower())
 
         if what == "system":
             if not netboot_enabled:

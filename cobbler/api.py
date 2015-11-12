@@ -89,11 +89,6 @@ class CobblerAPI:
         self.perms_ok = False
         if not CobblerAPI.__has_loaded:
 
-            if os.path.exists("/etc/cobbler/use.couch"):
-                self.use_couch = True
-            else:
-                self.use_couch = False
-
             # NOTE: we do not log all API actions, because
             # a simple CLI invocation may call adds and such
             # to load the config, which would just fill up
@@ -315,15 +310,6 @@ class CobblerAPI:
 
     # =======================================================================
 
-    def update(self):
-        """
-        This can be called is no longer used by cobbler.
-        And is here to just avoid breaking older scripts.
-        """
-        pass
-
-    # ========================================================================
-
     def copy_item(self, what, ref, newname, logger=None):
         self.log("copy_item(%s)" % what, [ref.name, newname])
         self.get_items(what).copy(ref, newname, logger=logger)
@@ -500,7 +486,6 @@ class CobblerAPI:
         else:
             res = items.find(return_list=True, no_errors=False, **criteria)
         return res
-
 
     def find_distro(self, name=None, return_list=False, no_errors=False, **kargs):
         return self._collection_mgr.distros().find(name=name, return_list=return_list, no_errors=no_errors, **kargs)
@@ -803,10 +788,10 @@ class CobblerAPI:
         self.log("import_tree", [mirror_url, mirror_name, network_root, autoinstall_file, rsync_flags])
 
         # both --path and --name are required arguments
-        if mirror_url is None:
+        if mirror_url is None or not mirror_url:
             self.log("import failed.  no --path specified")
             return False
-        if mirror_name is None:
+        if mirror_name is None or not mirror_name:
             self.log("import failed.  no --name specified")
             return False
 
@@ -883,22 +868,6 @@ class CobblerAPI:
                     self.log("Network root given to --available-as is missing a colon, please see the manpage example.")
                     return False
 
-        # importer_modules = self.get_modules_in_category("manage/import")
-        # for importer_module in importer_modules:
-        #    manager = importer_module.get_import_manager(self._collection_mgr,logger)
-        #    try:
-        #        (found,pkgdir) = manager.check_for_signature(path,breed)
-        #        if found:
-        #            self.log("running import manager: %s" % manager.what())
-        #            return manager.run(pkgdir,mirror_name,path,network_root,autoinstall_file,rsync_flags,arch,breed,os_version)
-        #    except:
-        #        self.log("an exception occured while running the import manager")
-        #        self.log("error was: %s" % sys.exc_info()[1])
-        #        continue
-        # self.log("No import managers found a valid signature at the location specified")
-        # # FIXME: since we failed, we should probably remove the
-        # # path tree we created above so we don't leave cruft around
-        # return False
         import_module = self.get_module_by_name("manage_import_signatures").get_import_manager(self._collection_mgr, logger)
         import_module.run(path, mirror_name, network_root, autoinstall_file, arch, breed, os_version)
 

@@ -38,7 +38,6 @@ class ContentDownloader:
             logger = clogger.Logger()
         self.logger = logger
 
-
     def run(self, force=False):
         """
         Download bootloader content for all of the latest bootloaders, since the user
@@ -48,12 +47,11 @@ class ContentDownloader:
         they can still source their cross-arch bootloader content manually.
         """
 
-        content_server = "http://www.cobblerd.org/loaders"
+        content_server = "http://cobbler.github.io/loaders"
         dest = "/var/lib/cobbler/loaders"
 
         files = (
             ("%s/README" % content_server, "%s/README" % dest),
-            ("%s/COPYING.elilo" % content_server, "%s/COPYING.elilo" % dest),
             ("%s/COPYING.yaboot" % content_server, "%s/COPYING.yaboot" % dest),
             ("%s/COPYING.syslinux" % content_server, "%s/COPYING.syslinux" % dest),
             ("%s/yaboot-1.3.17" % content_server, "%s/yaboot" % dest),

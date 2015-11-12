@@ -58,12 +58,11 @@ EVENT_FAILED = "failed"
 EVENT_INFO = "notification"
 
 
-
 class CobblerThread(Thread):
     """
     Code for Cobbler's XMLRPC API.
     """
-    def __init__(self, event_id, remote, logatron, options):
+    def __init__(self, event_id, remote, logatron, options, task_name, api):
         Thread.__init__(self)
         self.event_id = event_id
         self.remote = remote
@@ -71,6 +70,8 @@ class CobblerThread(Thread):
         if options is None:
             options = {}
         self.options = options
+        self.task_name = task_name
+        self.api = api
 
     def on_done(self):
         pass
@@ -78,12 +79,16 @@ class CobblerThread(Thread):
     def run(self):
         time.sleep(1)
         try:
+            if utils.run_triggers(self.api, None, "/var/lib/cobbler/triggers/task/%s/pre/*" % self.task_name, self.options, self.logger):
+                self.remote._set_task_state(self, self.event_id, EVENT_FAILED)
+                return False
             rc = self._run(self)
             if rc is not None and not rc:
                 self.remote._set_task_state(self, self.event_id, EVENT_FAILED)
             else:
                 self.remote._set_task_state(self, self.event_id, EVENT_COMPLETE)
-            self.on_done()
+                self.on_done()
+                utils.run_triggers(self.api, None, "/var/lib/cobbler/triggers/task/%s/post/*" % self.task_name, self.options, self.logger)
             return rc
         except:
             utils.log_exc(self.logger)
@@ -334,7 +339,7 @@ class CobblerXMLRPCInterface:
         self._log("start_task(%s); event_id(%s)" % (name, event_id))
         logatron = clogger.Logger("/var/log/cobbler/tasks/%s.log" % event_id)
 
-        thr_obj = CobblerThread(event_id, self, logatron, args)
+        thr_obj = CobblerThread(event_id, self, logatron, args, role_name, self.api)
         on_done_type = type(thr_obj.on_done)
 
         thr_obj._run = thr_obj_fn
@@ -361,13 +366,6 @@ class CobblerXMLRPCInterface:
         else:
             raise CX("no event with that id")
 
-    def __sorter(self, a, b):
-        """
-        Helper function to sort two dict representations of
-        cobbler objects by name.
-        """
-        return cmp(a["name"], b["name"])
-
     def last_modified_time(self, token=None):
         """
         Return the time of the last modification to any object.
@@ -375,12 +373,6 @@ class CobblerXMLRPCInterface:
         objects have changed since last check.
         """
         return self.api.last_modified_time()
-
-    def update(self, token=None):
-        """
-        Deprecated method.  Now does nothing.
-        """
-        return True
 
     def ping(self):
         """
@@ -616,28 +608,28 @@ class CobblerXMLRPCInterface:
             items = [x.to_dict() for x in items]
         return self.xmlrpc_hacks(items)
 
-    def find_distro(self, criteria={}, expand=False, token=None, **rest):
+    def find_distro(self, criteria=None, expand=False, token=None, **rest):
         return self.find_items("distro", criteria, expand=expand)
 
-    def find_profile(self, criteria={}, expand=False, token=None, **rest):
+    def find_profile(self, criteria=None, expand=False, token=None, **rest):
         return self.find_items("profile", criteria, expand=expand)
 
-    def find_system(self, criteria={}, expand=False, token=None, **rest):
+    def find_system(self, criteria=None, expand=False, token=None, **rest):
         return self.find_items("system", criteria, expand=expand)
 
-    def find_repo(self, criteria={}, expand=False, token=None, **rest):
+    def find_repo(self, criteria=None, expand=False, token=None, **rest):
         return self.find_items("repo", criteria, expand=expand)
 
-    def find_image(self, criteria={}, expand=False, token=None, **rest):
+    def find_image(self, criteria=None, expand=False, token=None, **rest):
         return self.find_items("image", criteria, expand=expand)
 
-    def find_mgmtclass(self, criteria={}, expand=False, token=None, **rest):
+    def find_mgmtclass(self, criteria=None, expand=False, token=None, **rest):
         return self.find_items("mgmtclass", criteria, expand=expand)
 
-    def find_package(self, criteria={}, expand=False, token=None, **rest):
+    def find_package(self, criteria=None, expand=False, token=None, **rest):
         return self.find_items("package", criteria, expand=expand)
 
-    def find_file(self, criteria={}, expand=False, token=None, **rest):
+    def find_file(self, criteria=None, expand=False, token=None, **rest):
         return self.find_items("file", criteria, expand=expand)
 
     def find_items_paged(self, what, criteria=None, sort_field=None, page=None, items_per_page=None, token=None):
@@ -918,9 +910,8 @@ class CobblerXMLRPCInterface:
         if f in ("delete_interface", "rename_interface"):
             return True
 
-        k = "*%s" % f
-        for x in item_system.FIELDS:
-            if k == x[0]:
+        for x in item_system.NETWORK_INTERFACE_FIELDS:
+            if f == x[0]:
                 return True
         return False
 
@@ -1097,6 +1088,12 @@ class CobblerXMLRPCInterface:
         except Exception:
             utils.log_exc(self.logger)
             return "# This automatic OS installation file had errors that prevented it from being rendered correctly.\n# The cobbler.log should have information relating to this failure."
+
+    def generate_profile_autoinstall(self, profile):
+        return self.generate_autoinstall(profile=profile)
+
+    def generate_system_autoinstall(self, system):
+        return self.generate_autoinstall(system=system)
 
     def generate_gpxe(self, profile=None, system=None, **rest):
         self._log("generate_gpxe")
@@ -1548,16 +1545,13 @@ class CobblerXMLRPCInterface:
 
     # this is used by the puppet external nodes feature
     def find_system_by_dns_name(self, dns_name):
-        # FIXME: implement using api.py's find API
-        # and expose generic finds for other methods
+        # FIXME: expose generic finds for other methods
         # WARNING: this function is /not/ expected to stay in cobbler long term
-        systems = self.get_systems()
-        for x in systems:
-            for y in x["interfaces"]:
-                if x["interfaces"][y]["dns_name"] == dns_name:
-                    name = x["name"]
-                    return self.get_system_for_koan(name)
-        return {}
+        system = self.api.find_system(dns_name=dns_name)
+        if system is None:
+            return {}
+        else:
+            return self.get_system_for_koan(system.name)
 
     def get_distro_as_rendered(self, name, token=None, **rest):
         """

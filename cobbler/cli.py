@@ -144,7 +144,8 @@ def report_item(remote, otype, item=None, name=None):
     elif otype == "profile":
         data = utils.to_string_from_fields(item, item_profile.FIELDS)
     elif otype == "system":
-        data = utils.to_string_from_fields(item, item_system.FIELDS)
+        data = utils.to_string_from_fields(item, item_system.FIELDS,
+                                           item_system.NETWORK_INTERFACE_FIELDS)
     elif otype == "repo":
         data = utils.to_string_from_fields(item, item_repo.FIELDS)
     elif otype == "image":
@@ -257,7 +258,6 @@ def add_options_from_fields(object_type, parser, fields, network_interface_field
     #    parser.add_option("--no-sync",     action="store_true", dest="nosync", help="suppress sync for speed")
 
 
-
 class CobblerCLI:
 
     def __init__(self):
@@ -310,7 +310,6 @@ class CobblerCLI:
         else:
             return args[1]
 
-
     def check_setup(self):
         """
         Detect permissions and service accessibility problems and provide
@@ -348,8 +347,6 @@ class CobblerCLI:
         object_type = self.get_object_type(args)
         object_action = self.get_object_action(object_type, args)
         direct_action = self.get_direct_action(object_type, args)
-
-
 
         try:
             if object_type is not None:
@@ -472,9 +469,9 @@ class CobblerCLI:
                     sys.exit(1)
             elif object_action == "get-autoinstall":
                 if object_type == "profile":
-                    data = self.remote.generate_autoinstall(profile=options.name)
+                    data = self.remote.generate_profile_autoinstall(options.name)
                 elif object_type == "system":
-                    data = self.remote.generate_autoinstall(system=options.name)
+                    data = self.remote.generate_system_autoinstall(options.name)
                 print data
             elif object_action == "dumpvars":
                 if object_type == "profile":
@@ -513,7 +510,6 @@ class CobblerCLI:
             self.print_task(task_id)
             self.follow_task(task_id)
 
-
     # BOOKMARK
     def direct_command(self, action_name):
         """
@@ -524,7 +520,7 @@ class CobblerCLI:
         if action_name == "buildiso":
 
             defaultiso = os.path.join(os.getcwd(), "generated.iso")
-            self.parser.add_option("--iso", dest="iso", default=defaultiso, help="(OPTIONAL) output ISO to this path")
+            self.parser.add_option("--iso", dest="iso", default=defaultiso, help="(OPTIONAL) output ISO to this file")
             self.parser.add_option("--profiles", dest="profiles", help="(OPTIONAL) use these profiles only")
             self.parser.add_option("--systems", dest="systems", help="(OPTIONAL) use these systems only")
             self.parser.add_option("--tempdir", dest="buildisodir", help="(OPTIONAL) working directory")
@@ -672,14 +668,12 @@ class CobblerCLI:
 
         return True
 
-
     def print_task(self, task_id):
         print "task started: %s" % task_id
         events = self.remote.get_events()
         (etime, name, status, who_viewed) = events[task_id]
         atime = time.asctime(time.localtime(etime))
         print "task started (id=%s, time=%s)" % (name, atime)
-
 
     def follow_task(self, task_id):
         logfile = "/var/log/cobbler/tasks/%s.log" % task_id
@@ -706,7 +700,6 @@ class CobblerCLI:
                 if line.find(" | "):
                     line = line.split(" | ")[-1]
                 print line,         # already has newline
-
 
     def print_object_help(self, object_type):
         """

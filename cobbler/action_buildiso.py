@@ -57,7 +57,6 @@ class BuildIso:
         self.iso_template = header_src.read()
         header_src.close()
 
-
     def add_remaining_kopts(self, koptdict):
         """
         Add remaining kernel_options to append_line
@@ -75,7 +74,6 @@ class BuildIso:
         append_line += "\n"
         return append_line
 
-
     def make_shorter(self, distname):
         """
         Return a short distro identifier
@@ -86,7 +84,6 @@ class BuildIso:
             self.distctr += 1
             self.distmap[distname] = str(self.distctr)
             return str(self.distctr)
-
 
     def copy_boot_files(self, distro, destdir, prefix=None):
         """
@@ -103,13 +100,11 @@ class BuildIso:
             shutil.copyfile(distro.kernel, os.path.join(destdir, "%s.krn" % prefix))
             shutil.copyfile(distro.initrd, os.path.join(destdir, "%s.img" % prefix))
 
-
     def sort_name(self, a, b):
         """
         Sort profiles/systems by name
         """
         return cmp(a.name, b.name)
-
 
     def generate_netboot_iso(self, imagesdir, isolinuxdir, profiles=None, systems=None, exclude_dns=None):
         """
@@ -423,7 +418,6 @@ class BuildIso:
         cfg.write("MENU END\n")
         cfg.close()
 
-
     def generate_standalone_iso(self, imagesdir, isolinuxdir, distname, filesource):
         """
         Create bootable CD image to be used for handsoff CD installtions
@@ -493,8 +487,8 @@ class BuildIso:
                 autoinstall_data = self.api.autoinstallgen.generate_autoinstall_for_system(descendant.name)
 
             if distro.breed == "redhat":
-                cdregex = re.compile("url .*\n", re.IGNORECASE)
-                autoinstall_data = cdregex.sub("cdrom\n", autoinstall_data)
+                cdregex = re.compile("^\s*url .*\n", re.IGNORECASE | re.MULTILINE)
+                autoinstall_data = cdregex.sub("cdrom\n", autoinstall_data, count=1)
 
             autoinstall_name = os.path.join(isolinuxdir, "%s.cfg" % descendant.name)
             autoinstall_file = open(autoinstall_name, "w+")
@@ -505,7 +499,6 @@ class BuildIso:
         cfg.write("\n")
         cfg.write("MENU END\n")
         cfg.close()
-
 
     def run(self, iso=None, buildisodir=None, profiles=None, systems=None, distro=None, standalone=None, source=None, exclude_dns=None, mkisofs_opts=None):
 

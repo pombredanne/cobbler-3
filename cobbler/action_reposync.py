@@ -64,7 +64,6 @@ class RepoSync:
 
         self.logger.info("hello, reposync")
 
-
     # ===================================================================
 
     def run(self, name=None, verbose=True):
@@ -148,7 +147,6 @@ class RepoSync:
         if report_failure:
             utils.die(self.logger, "overall reposync failed, at least one repo failed to synchronize")
 
-
     # ==================================================================================
 
     def sync(self, repo):
@@ -194,7 +192,7 @@ class RepoSync:
                     if utils.get_family() in ("redhat", "suse"):
                         cmd = "/usr/bin/rpmquery --queryformat=%{VERSION} createrepo"
                         createrepo_ver = utils.subprocess_get(self.logger, cmd)
-                        if createrepo_ver >= "0.9.7":
+                        if utils.compare_versions_gt(createrepo_ver, "0.9.7"):
                             mdoptions.append("--deltas")
                         else:
                             self.logger.error("this repo has presto metadata; you must upgrade createrepo to >= 0.9.7 first and then need to resync the repo through cobbler.")
@@ -269,20 +267,35 @@ class RepoSync:
 
     # ====================================================================================
 
+    def reposync_cmd(self):
+
+        """
+        Determine reposync command
+        """
+
+        cmd = None                # reposync command
+        if os.path.exists("/usr/bin/dnf"):
+            cmd = "/usr/bin/dnf reposync"
+        elif os.path.exists("/usr/bin/reposync"):
+            cmd = "/usr/bin/reposync"
+        else:
+            # warn about not having yum-utils.  We don't want to require it in the package because
+            # Fedora 22+ has moved to dnf.
+
+            utils.die(self.logger, "no /usr/bin/reposync found, please install yum-utils")
+        return cmd
+
+    # ====================================================================================
+
     def rhn_sync(self, repo):
 
         """
         Handle mirroring of RHN repos.
         """
 
-        # FIXME? warn about not having yum-utils.  We don't want to require it in the package because
-        # RHEL4 and RHEL5U0 don't have it.
+        cmd = self.reposync_cmd()  # reposync command
 
-        if not os.path.exists("/usr/bin/reposync"):
-            utils.die(self.logger, "no /usr/bin/reposync found, please install yum-utils")
-
-        cmd = ""                  # command to run
-        has_rpm_list = False      # flag indicating not to pull the whole repo
+        has_rpm_list = False       # flag indicating not to pull the whole repo
 
         # detect cases that require special handling
 
@@ -298,8 +311,7 @@ class RepoSync:
             # FIXME: there's a chance this might break the RHN D/L case
             os.makedirs(temp_path)
 
-        # how we invoke yum-utils depends on whether this is RHN content or not.
-
+        # how we invoke reposync depends on whether this is RHN content or not.
 
         # this is the somewhat more-complex RHN case.
         # NOTE: this requires that you have entitlements for the server and you give the mirror as rhn://$channelname
@@ -309,7 +321,7 @@ class RepoSync:
         if has_rpm_list:
             self.logger.warning("warning: --rpm-list is not supported for RHN content")
         rest = repo.mirror[6:]      # everything after rhn://
-        cmd = "/usr/bin/reposync %s -r %s --download_path=%s" % (self.rflags, rest, self.settings.webdir + "/repo_mirror")
+        cmd = "%s %s --repo=%s --download_path=%s" % (cmd, self.rflags, rest, self.settings.webdir + "/repo_mirror")
         if repo.name != rest:
             args = {"name": repo.name, "rest": rest}
             utils.die(self.logger, "ERROR: repository %(name)s needs to be renamed %(rest)s as the name of the cobbler repository must match the name of the RHN channel" % args)
@@ -358,14 +370,8 @@ class RepoSync:
         if not repo.mirror_locally:
             return
 
-        # warn about not having yum-utils.  We don't want to require it in the package because
-        # RHEL4 and RHEL5U0 don't have it.
-
-        if not os.path.exists("/usr/bin/reposync"):
-            utils.die(self.logger, "no /usr/bin/reposync found, please install yum-utils")
-
-        cmd = ""                  # command to run
-        has_rpm_list = False      # flag indicating not to pull the whole repo
+        cmd = self.reposync_cmd()  # command to run
+        has_rpm_list = False       # flag indicating not to pull the whole repo
 
         # detect cases that require special handling
 
@@ -383,7 +389,7 @@ class RepoSync:
 
         if not has_rpm_list:
             # if we have not requested only certain RPMs, use reposync
-            cmd = "/usr/bin/reposync %s --config=%s --repoid=%s --download_path=%s" % (self.rflags, temp_file, repo.name, self.settings.webdir + "/repo_mirror")
+            cmd = "%s %s --config=%s --repoid=%s --download_path=%s" % (cmd, self.rflags, temp_file, repo.name, self.settings.webdir + "/repo_mirror")
             if repo.arch != "":
                 if repo.arch == "x86":
                     repo.arch = "i386"      # FIX potential arch errors
@@ -406,7 +412,12 @@ class RepoSync:
             # older yumdownloader sometimes explodes on --resolvedeps
             # if this happens to you, upgrade yum & yum-utils
             extra_flags = self.settings.yumdownloader_flags
-            cmd = "/usr/bin/yumdownloader %s %s --disablerepo=* --enablerepo=%s -c %s --destdir=%s %s" % (extra_flags, use_source, repo.name, temp_file, dest_path, " ".join(repo.rpm_list))
+            cmd = ""
+            if os.path.exists("/usr/bin/dnf"):
+                cmd = "/usr/bin/dnf download"
+            else:
+                cmd = "/usr/bin/yumdownloader"
+            cmd = "%s %s %s --disablerepo=* --enablerepo=%s -c %s --destdir=%s %s" % (cmd, extra_flags, use_source, repo.name, temp_file, dest_path, " ".join(repo.rpm_list))
 
         # now regardless of whether we're doing yumdownloader or reposync
         # or whether the repo was http://, ftp://, or rhn://, execute all queued
@@ -420,14 +431,17 @@ class RepoSync:
 
         # grab repomd.xml and use it to download any metadata we can use
         proxies = {}
-        proxies['http'] = self.settings.proxy_url_ext
+        if repo.proxy is not None and repo.proxy:
+            proxies['http'] = repo.proxy
+        else:
+            proxies['http'] = self.settings.proxy_url_ext
 
         src = repo_mirror + "/repodata/repomd.xml"
         dst = temp_path + "/repomd.xml"
         try:
             urlgrabber.grabber.urlgrab(src, filename=dst, proxies=proxies)
-        except:
-            utils.die(self.logger, "failed to fetch %s" % src)
+        except Exception as e:
+            utils.die(self.logger, "failed to fetch " + src + " " + e.args)
 
         # create our repodata directory now, as any extra metadata we're
         # about to download probably lives there
@@ -442,15 +456,14 @@ class RepoSync:
                 dst = dest_path + "/" + mdfile
                 try:
                     urlgrabber.grabber.urlgrab(src, filename=dst, proxies=proxies)
-                except:
-                    utils.die(self.logger, "failed to fetch %s" % src)
+                except Exception as e:
+                    utils.die(self.logger, "failed to fetch " + src + " " + e.args)
 
         # now run createrepo to rebuild the index
         if repo.mirror_locally:
             os.path.walk(dest_path, self.createrepo_walker, repo)
 
     # ====================================================================================
-
 
     def apt_sync(self, repo):
 
@@ -522,7 +535,6 @@ class RepoSync:
             rc = utils.subprocess_call(self.logger, cmd)
             if rc != 0:
                 utils.die(self.logger, "cobbler reposync failed")
-
 
     def create_local_file(self, dest_path, repo, output=True):
         """
@@ -607,6 +619,8 @@ class RepoSync:
         owner = "root:apache"
         if os.path.exists("/etc/SuSE-release"):
             owner = "root:www"
+        elif os.path.exists("/etc/debian_version"):
+            owner = "root:www-data"
 
         cmd1 = "chown -R " + owner + " %s" % repo_path
 

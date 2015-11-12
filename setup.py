@@ -201,7 +201,6 @@ class build_cfg(Command):
         }
         self.configure_values.update(self.distribution.configure_values)
 
-
     def run(self):
         # On dry-run ignore missing source files.
         if self.dry_run:
@@ -389,7 +388,7 @@ class test_command(Command):
 
     def run(self):
         testfiles = []
-        testdirs = ["koan"]
+        testdirs = []
 
         for d in testdirs:
             testdir = os.path.join(os.getcwd(), "tests", d)
@@ -544,7 +543,6 @@ if __name__ == "__main__":
     webcontent = webroot + "cobbler_webui_content/"
     webimages = webcontent + "/images"
 
-
     setup(
         distclass=Distribution,
         cmdclass={
@@ -563,7 +561,7 @@ if __name__ == "__main__":
         long_description="Cobbler is a network install server.  Cobbler supports PXE, virtualized installs, and reinstalling existing Linux machines.  The last two modes use a helper tool, 'koan', that integrates with cobbler.  There is also a web interface 'cobbler-web'.  Cobbler's advanced features include importing distributions from DVDs and rsync mirrors, automatic OS installation templating, integrated yum mirroring, and built-in DHCP/DNS Management.  Cobbler has a XMLRPC API for integration with other applications.",
         author="Team Cobbler",
         author_email="cobbler@lists.fedorahosted.org",
-        url="http://www.cobblerd.org/",
+        url="https://cobbler.github.io",
         license="GPLv2+",
         requires=[
             "mod_python",
@@ -574,15 +572,11 @@ if __name__ == "__main__":
             "cobbler/modules",
             "cobbler/web",
             "cobbler/web/templatetags",
-            "koan",
         ],
         scripts=[
             "bin/cobbler",
             "bin/cobblerd",
             "bin/cobbler-ext-nodes",
-            "bin/koan",
-            "bin/ovz-install",
-            "bin/cobbler-register",
         ],
         configure_values={
             'webroot': os.path.normpath(webroot),
@@ -597,8 +591,6 @@ if __name__ == "__main__":
         ],
         man_pages=[
             'docs/man/cobbler.1.pod',
-            'docs/man/cobbler-register.1.pod',
-            'docs/man/koan.1.pod'
         ],
         data_files=[
             # tftpd, hide in /usr/sbin
@@ -607,10 +599,10 @@ if __name__ == "__main__":
             ("%s" % webconfig, ["build/config/apache/cobbler_web.conf"]),
             ("%s" % initpath, ["build/config/service/cobblerd"]),
             ("%s" % docpath, glob("build/docs/man/*.1.gz")),
-            ("%sautoinstall_templates" % libpath, glob("autoinstall_templates/*")),
-            ("%sautoinstall_templates/install_profiles" % libpath, glob("autoinstall_templates/install_profiles/*")),
-            ("%sautoinstall_snippets" % libpath, glob("autoinstall_snippets/*", recursive=True)),
-            ("%sautoinstall_scripts" % libpath, glob("autoinstall_scripts/*")),
+            ("%s/templates" % libpath, glob("autoinstall_templates/*")),
+            ("%s/templates/install_profiles" % libpath, glob("autoinstall_templates/install_profiles/*")),
+            ("%s/snippets" % libpath, glob("autoinstall_snippets/*", recursive=True)),
+            ("%s/scripts" % libpath, glob("autoinstall_scripts/*")),
             ("%s" % libpath, ["config/cobbler/distro_signatures.json"]),
             ("share/cobbler/web", glob("web/*.*")),
             ("%s" % webcontent, glob("web/static/*")),
@@ -628,7 +620,6 @@ if __name__ == "__main__":
             ("%ssettings.d" % etcpath, glob("config/cobbler/settings.d/*")),
             ("%s" % etcpath, ["config/bash/cobbler_bash",
                               "config/cobbler/auth.conf",
-                              "config/cobbler/distro_signatures.json",
                               "config/cobbler/modules.conf",
                               "config/cobbler/mongodb.conf",
                               "config/cobbler/users.conf",
@@ -688,17 +679,12 @@ if __name__ == "__main__":
             ("%scollections/mgmtclasses" % libpath, []),
             ("%scollections/packages" % libpath, []),
             ("%scollections/files" % libpath, []),
-            # Build empty directories to hold koan localconfig
-            ("/var/lib/koan/config", []),
             # logfiles
             ("%scobbler/kicklog" % logpath, []),
             ("%scobbler/syslog" % logpath, []),
             ("%shttpd/cobbler" % logpath, []),
             ("%scobbler/anamon" % logpath, []),
-            ("%skoan" % logpath, []),
             ("%scobbler/tasks" % logpath, []),
-            # spoolpaths
-            ("share/cobbler/spool/koan", []),
             # web page directories that we own
             ("%scobbler/localmirror" % webroot, []),
             ("%scobbler/repo_mirror" % webroot, []),
