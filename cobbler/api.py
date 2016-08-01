@@ -815,7 +815,7 @@ class CobblerAPI:
         if not mirror_url.endswith("/"):
             mirror_url = "%s/" % mirror_url
 
-        if mirror_url.startswith("http://") or mirror_url.startswith("ftp://") or mirror_url.startswith("nfs://"):
+        if mirror_url.startswith("http://") or mirror_url.startswith("https://") or mirror_url.startswith("ftp://") or mirror_url.startswith("nfs://"):
             # http mirrors are kind of primative.  rsync is better.
             # that's why this isn't documented in the manpage and we don't support them.
             # TODO: how about adding recursive FTP as an option?
@@ -853,12 +853,12 @@ class CobblerAPI:
 
             if not network_root.endswith("/"):
                 network_root += "/"
-            valid_roots = ["nfs://", "ftp://", "http://"]
+            valid_roots = ["nfs://", "ftp://", "http://", "https://"]
             for valid_root in valid_roots:
                 if network_root.startswith(valid_root):
                     break
             else:
-                self.log("Network root given to --available-as must be nfs://, ftp://, or http://")
+                self.log("Network root given to --available-as must be nfs://, ftp://, http://, or https://")
                 return False
 
             if network_root.startswith("nfs://"):
@@ -958,14 +958,14 @@ class CobblerAPI:
 
     def build_iso(self, iso=None,
                   profiles=None, systems=None, buildisodir=None, distro=None,
-                  standalone=None, source=None,
+                  standalone=None, airgapped=None, source=None,
                   exclude_dns=None, mkisofs_opts=None, logger=None):
         builder = action_buildiso.BuildIso(self._collection_mgr, logger=logger)
         builder.run(
             iso=iso,
             profiles=profiles, systems=systems,
             buildisodir=buildisodir, distro=distro,
-            standalone=standalone, source=source,
+            standalone=standalone, airgapped=airgapped, source=source,
             exclude_dns=exclude_dns, mkisofs_opts=mkisofs_opts
         )
 
